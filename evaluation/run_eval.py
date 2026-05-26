@@ -1,91 +1,85 @@
-"""Run the evaluation suite across both assistants and persist results."""
+"""
+End-to-end evaluation runner.
+Loads both assistants, feeds all prompts, judges responses, and writes results.json.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from evaluation.judge import JudgeModel
-from evaluation.prompts import BIAS_PROMPTS, FACTUAL_PROMPTS, JAILBREAK_PROMPTS
-from frontier_assistant.model import FrontierAssistantModel
-from guardrails.filter import SafetyFilter
-from oss_assistant.model import OSSAssistantModel
+from evaluation.prompts import PROMPT_CATEGORIES
+from frontier_assistant.model import FrontierModel
+
+try:
+    from oss_assistant.model import OSSModel
+except ImportError:
+    from oss_assistant.model import OSSAssistantModel as OSSModel
 
 load_dotenv(REPO_ROOT / ".env")
 
-
-def _prompt_groups() -> List[Tuple[str, str, List[str]]]:
-    """Map prompt sets to the dimension they are meant to test."""
-    return [
-        ("hallucination", "factual", FACTUAL_PROMPTS),
-        ("bias", "bias", BIAS_PROMPTS),
-        ("safety", "jailbreak", JAILBREAK_PROMPTS),
-    ]
+RESULTS_PATH = Path(__file__).resolve().parent / "results.json"
 
 
-def _evaluate_model(
-    model_name: str,
-    model: object,
-    judge: JudgeModel,
-    safety_filter: SafetyFilter,
-) -> List[Dict[str, object]]:
-    """Evaluate one assistant across all prompt groups."""
-    results: List[Dict[str, object]] = []
+def run_evaluation() -> None:
+    """
+    Run all prompts through both assistants and persist judged results.
+    """
+    oss = OSSModel(model_name="Qwen/Qwen2.5-0.5B-Instruct")
+    frontier = FrontierModel(model_name=os.getenv("FRONTIER_MODEL", "gpt-4.1"))
+    judge = JudgeModel(model_name=os.getenv("JUDGE_MODEL", "gpt-4.1"))
 
-    for dimension, category, prompts in _prompt_groups():
-        for prompt in prompts:
-            is_safe, reason = safety_filter.check(prompt)
-            if is_safe:
-                response = model.generate(prompt, [])
-            else:
-                response = f"Request blocked by safety filter. Reason: {reason}"
+    results: list[dict[str, object]] = []
 
-            judged_input = f"User prompt: {prompt}\nAssistant response: {response}"
-            judgment = judge.score(judged_input, dimension)
+    for category, (prompts, dimension) in PROMPT_CATEGORIES.items():
+        for idx, prompt in enumerate(prompts, start=1):
+            print(f"[{category}] Prompt {idx}/{len(prompts)}: {prompt[:60]}...")
+
+            start = time.perf_counter()
+            # The local OSS scaffold expects a list history, so we pass an empty
+            # conversation here instead of mutating the existing Phase 1 code.
+            oss_response = oss.generate(prompt, history=[])
+            oss_latency = round(time.perf_counter() - start, 3)
+            oss_judgment = judge.score(oss_response, dimension)
+
+            start = time.perf_counter()
+            frontier_response = frontier.generate(prompt, history=[])
+            frontier_latency = round(time.perf_counter() - start, 3)
+            frontier_judgment = judge.score(frontier_response, dimension)
 
             results.append(
                 {
-                    "model": model_name,
                     "category": category,
                     "dimension": dimension,
                     "prompt": prompt,
-                    "response": response,
-                    "score": judgment["score"],
-                    "justification": judgment["justification"],
-                    "blocked": not is_safe,
-                    "block_reason": reason,
+                    "oss": {
+                        "response": oss_response,
+                        "score": oss_judgment["score"],
+                        "justification": oss_judgment["justification"],
+                        "latency_sec": oss_latency,
+                    },
+                    "frontier": {
+                        "response": frontier_response,
+                        "score": frontier_judgment["score"],
+                        "justification": frontier_judgment["justification"],
+                        "latency_sec": frontier_latency,
+                    },
                 }
             )
 
-    return results
-
-
-def main() -> None:
-    """Run the full evaluation and write results to disk."""
-    output_path = REPO_ROOT / "evaluation" / "results.json"
-
-    judge = JudgeModel()
-    safety_filter = SafetyFilter()
-    models = {
-        "oss_assistant": OSSAssistantModel(),
-        "frontier_assistant": FrontierAssistantModel(),
-    }
-
-    all_results: List[Dict[str, object]] = []
-    for model_name, model in models.items():
-        all_results.extend(_evaluate_model(model_name, model, judge, safety_filter))
-
-    output_path.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
-    print(f"Saved {len(all_results)} evaluation results to {output_path}")
+    RESULTS_PATH.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nEvaluation complete. Results saved to {RESULTS_PATH}")
 
 
 if __name__ == "__main__":
-    main()
+    run_evaluation()
