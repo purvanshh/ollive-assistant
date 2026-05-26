@@ -1,0 +1,8 @@
+gradio
+transformers
+anthropic
+torch
+seaborn
+matplotlib
+requests
+python-dotenv

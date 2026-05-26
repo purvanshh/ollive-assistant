@@ -1,0 +1,1 @@
+"""Frontier assistant package."""
