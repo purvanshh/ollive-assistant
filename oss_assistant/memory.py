@@ -24,3 +24,11 @@ class ChatMemory:
     def get_history(self) -> List[Dict[str, str]]:
         """Return a shallow copy of the stored conversation history."""
         return list(self._turns)
+
+    def clear(self) -> None:
+        """Reset the conversation history."""
+        self._turns.clear()
+
+
+# Compatibility alias so the OSS and frontier assistants expose the same shape.
+ConversationMemory = ChatMemory

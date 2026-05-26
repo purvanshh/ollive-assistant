@@ -8,3 +8,5 @@ matplotlib>=3.8
 requests>=2.31
 python-dotenv>=1.0
 pandas>=2.0
+langfuse>=2.0
+accelerate>=0.25
