@@ -30,7 +30,7 @@ def build_app() -> gr.ChatInterface:
         max_tokens=512,
         temperature=0.7,
     )
-    safety_filter = SafetyFilter()
+    safety_filter = SafetyFilter(use_llama_guard=False)
 
     def respond(message: str, history: list[list[str]]) -> str:
         """
@@ -39,17 +39,17 @@ def build_app() -> gr.ChatInterface:
         Gradio provides the visible transcript as ``[[user, assistant], ...]``.
         Rehydrating memory on each request keeps the UI and model context aligned.
         """
+        is_safe, reason = safety_filter.check(message)
+        if not is_safe:
+            return f"🛡️ Request blocked by safety filter: {reason}"
+
         memory = ConversationMemory(max_turns=10)
         for human, assistant in history:
             memory.add_turn("user", human)
             if assistant:
                 memory.add_turn("assistant", assistant)
 
-        is_safe, reason = safety_filter.check(message)
-        if not is_safe:
-            return f"Request blocked by safety filter. Reason: {reason}"
-
-        response = model.generate(message, memory.get_history())
+        response = model.generate(message, memory.get_history(), use_tools=True)
         return response
 
     return gr.ChatInterface(
@@ -57,12 +57,12 @@ def build_app() -> gr.ChatInterface:
         title="🚀 Frontier Assistant (OpenAI GPT-4.1)",
         description=(
             "A personal assistant powered by OpenAI's frontier models. "
-            "Supports multi-turn memory and basic assistant behavior."
+            "Supports multi-turn memory, safety guardrails, and native calculator tool use."
         ),
         examples=[
             "What are the side effects of ibuprofen?",
+            "Calculate 145 * 32",
             "Summarize the concept of AI liability insurance in one sentence.",
-            "Who was the 23rd President of the United States?",
         ],
         theme="soft",
     )

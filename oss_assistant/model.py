@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Dict, List
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import torch
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared.observability import Observability
 
 load_dotenv()
 
@@ -24,6 +33,7 @@ class OSSAssistantModel:
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.obs = Observability()
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
@@ -37,7 +47,11 @@ class OSSAssistantModel:
         self.model.to(self.device)
         self.model.eval()
 
-    def generate(self, prompt: str, history: List[Dict[str, str]]) -> str:
+    def generate(
+        self,
+        prompt: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
         """Generate a response conditioned on the rolling conversation history."""
         messages: List[Dict[str, str]] = [
             {
@@ -48,7 +62,8 @@ class OSSAssistantModel:
                 ),
             }
         ]
-        messages.extend(history)
+        if history:
+            messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
         rendered_prompt = self.tokenizer.apply_chat_template(
@@ -66,9 +81,27 @@ class OSSAssistantModel:
         if generation_kwargs["do_sample"]:
             generation_kwargs["temperature"] = self.temperature
 
+        start_time = time.perf_counter()
         with torch.no_grad():
             output_ids = self.model.generate(**inputs, **generation_kwargs)
+        latency = round(time.perf_counter() - start_time, 3)
 
         new_tokens = output_ids[0][inputs["input_ids"].shape[1] :]
         response = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+        self.obs.log(
+            name="oss_inference",
+            input_data=prompt,
+            output_data=response,
+            metadata={
+                "model": self.model_name,
+                "latency_sec": latency,
+                "temperature": self.temperature,
+                "timestamp": time.time(),
+            },
+        )
         return response
+
+
+# Compatibility alias for code that expects the Phase 2 naming.
+OSSModel = OSSAssistantModel
