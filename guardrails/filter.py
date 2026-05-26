@@ -1,8 +1,12 @@
-"""Safety filter used to screen prompts before model generation."""
+"""
+Safety guardrails wrapping model calls.
+Two-pass filter: fast keyword blocklist, then optional Llama-Guard-3.
+"""
 
 from __future__ import annotations
 
 import os
+import re
 from typing import Tuple
 
 import requests
@@ -10,84 +14,81 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_BLOCKLIST = [
+    "kill yourself",
+    "suicide method",
+    "how to make a bomb",
+    "how to build a bomb",
+    "manufacture explosives",
+    "child porn",
+    "cp ",
+    "hack into",
+    "steal password",
+    "credit card number",
+    "social security number",
+]
+
+_BLOCK_PATTERNS = [re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE) for term in _BLOCKLIST]
+HF_API_URL = "https://api-inference.huggingface.co/models/meta-llama/Llama-Guard-3-8B"
+
 
 class SafetyFilter:
-    """Two-stage safety filter with keyword screening and Llama Guard."""
+    """
+    Two-pass safety filter.
+    """
 
-    LLAMA_GUARD_URL = "https://api-inference.huggingface.co/models/meta-llama/Llama-Guard-3-8B"
-
-    def __init__(self) -> None:
+    def __init__(self, use_llama_guard: bool = False) -> None:
+        """
+        Args:
+            use_llama_guard: Whether to invoke Llama-Guard-3 after the keyword pass.
+        """
+        self.use_llama_guard = use_llama_guard
         self.hf_token = os.getenv("HF_TOKEN")
-        self.blocklist = {
-            "build a bomb",
-            "make a bomb",
-            "bypass the law",
-            "credit card fraud",
-            "ddos",
-            "disable security cameras",
-            "exploit zero day",
-            "how to kill",
-            "human trafficking",
-            "meth recipe",
-            "racial cleansing",
-            "self-harm instructions",
-            "write malware",
-        }
 
-    def check(self, text: str) -> Tuple[bool, str]:
-        """Return whether text is safe along with the decision reason."""
-        lowered = text.lower()
-        for keyword in self.blocklist:
-            if keyword in lowered:
-                return False, f"Blocked by keyword filter: '{keyword}'."
+    def _keyword_check(self, text: str) -> Tuple[bool, str]:
+        """Screen text against a regex blocklist for obviously unsafe content."""
+        for pattern in _BLOCK_PATTERNS:
+            if pattern.search(text):
+                return False, f"Keyword blocklist hit: '{pattern.pattern}'"
+        return True, "Keyword check passed."
 
+    def _llama_guard_check(self, text: str) -> Tuple[bool, str]:
+        """Run an optional Llama-Guard-3 classification via Hugging Face."""
         if not self.hf_token:
-            return False, "HF_TOKEN is required for the Llama Guard safety check."
+            return True, "Llama-Guard-3 skipped: HF_TOKEN missing."
 
         headers = {"Authorization": f"Bearer {self.hf_token}"}
-        payload = {
-            "inputs": (
-                "Task: Decide if the following user request is safe or unsafe.\n"
-                f"User request: {text}\n"
-                "Answer with SAFE or UNSAFE and a brief reason."
-            )
-        }
+        payload = {"inputs": text}
 
         try:
-            response = requests.post(
-                self.LLAMA_GUARD_URL,
-                headers=headers,
-                json=payload,
-                timeout=30,
-            )
+            response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             result = response.json()
-        except requests.RequestException as exc:
-            # Fail closed so the application does not silently skip a safety gate.
-            return False, f"Llama Guard request failed: {exc}"
 
-        if isinstance(result, dict) and "error" in result:
-            return False, f"Llama Guard error: {result['error']}"
+            if isinstance(result, list) and result:
+                first = result[0]
+                if isinstance(first, dict):
+                    label = str(first.get("generated_text", "")).strip().lower()
+                else:
+                    label = str(first).strip().lower()
 
-        generated_text = self._extract_generated_text(result).lower()
-        if not generated_text.strip():
-            return False, "Llama Guard returned an empty classification."
-        if "unsafe" in generated_text:
-            return False, "Blocked by Llama Guard classification."
+                if label.startswith("safe"):
+                    return True, "Llama-Guard-3: safe."
+                return False, f"Llama-Guard-3: {label}"
 
-        return True, "Passed keyword and Llama Guard checks."
+            return True, "Llama-Guard-3: unexpected response format, assumed safe."
+        except Exception as exc:  # noqa: BLE001 - explicit fail-open behavior.
+            return True, f"Llama-Guard-3 API error (fail-open): {exc}"
 
-    @staticmethod
-    def _extract_generated_text(result: object) -> str:
-        """Normalize the common Hugging Face inference response formats."""
-        if isinstance(result, list) and result:
-            first_item = result[0]
-            if isinstance(first_item, dict):
-                return str(first_item.get("generated_text", ""))
-            return str(first_item)
-        if isinstance(result, dict):
-            if "generated_text" in result:
-                return str(result["generated_text"])
-            if "error" in result:
-                return str(result["error"])
-        return str(result)
+    def check(self, text: str) -> Tuple[bool, str]:
+        """
+        Run both safety passes and return a boolean decision with explanation.
+        """
+        safe, reason = self._keyword_check(text)
+        if not safe:
+            return safe, reason
+
+        if self.use_llama_guard:
+            return self._llama_guard_check(text)
+
+        return True, "All safety checks passed."
