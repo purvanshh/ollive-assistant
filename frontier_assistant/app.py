@@ -23,6 +23,30 @@ from guardrails.filter import SafetyFilter
 load_dotenv(REPO_ROOT / ".env")
 
 
+def _rehydrate_memory(history: list[object]) -> ConversationMemory:
+    """
+    Rebuild memory from either tuple-style or message-dict Gradio history.
+    """
+    memory = ConversationMemory(max_turns=10)
+
+    for item in history:
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+            if role in {"user", "assistant"} and isinstance(content, str):
+                memory.add_turn(role, content)
+            continue
+
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            human, assistant = item
+            if isinstance(human, str):
+                memory.add_turn("user", human)
+            if isinstance(assistant, str) and assistant:
+                memory.add_turn("assistant", assistant)
+
+    return memory
+
+
 def build_app() -> gr.ChatInterface:
     """Construct the frontier Gradio app."""
     model = FrontierModel(
@@ -32,23 +56,15 @@ def build_app() -> gr.ChatInterface:
     )
     safety_filter = SafetyFilter(use_llama_guard=False)
 
-    def respond(message: str, history: list[list[str]]) -> str:
+    def respond(message: str, history: list[object]) -> str:
         """
         Generate a response for the latest user message.
-
-        Gradio provides the visible transcript as ``[[user, assistant], ...]``.
-        Rehydrating memory on each request keeps the UI and model context aligned.
         """
         is_safe, reason = safety_filter.check(message)
         if not is_safe:
             return f"🛡️ Request blocked by safety filter: {reason}"
 
-        memory = ConversationMemory(max_turns=10)
-        for human, assistant in history:
-            memory.add_turn("user", human)
-            if assistant:
-                memory.add_turn("assistant", assistant)
-
+        memory = _rehydrate_memory(history)
         response = model.generate(message, memory.get_history(), use_tools=True)
         return response
 
