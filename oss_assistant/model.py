@@ -34,6 +34,7 @@ class OSSAssistantModel:
         self.temperature = temperature
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.obs = Observability()
+        self.last_generation_info: dict[str, float | int | str] = {}
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
@@ -88,6 +89,18 @@ class OSSAssistantModel:
 
         new_tokens = output_ids[0][inputs["input_ids"].shape[1] :]
         response = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        input_tokens = int(inputs["input_ids"].shape[1])
+        output_tokens = int(new_tokens.shape[0])
+        total_tokens = input_tokens + output_tokens
+        response_time_ms = round(latency * 1000, 2)
+        self.last_generation_info = {
+            "model": self.model_name,
+            "response_time_ms": response_time_ms,
+            "latency_sec": latency,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "token_count": total_tokens,
+        }
 
         self.obs.log(
             name="oss_inference",
@@ -96,6 +109,10 @@ class OSSAssistantModel:
             metadata={
                 "model": self.model_name,
                 "latency_sec": latency,
+                "response_time_ms": response_time_ms,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "token_count": total_tokens,
                 "temperature": self.temperature,
                 "timestamp": time.time(),
             },

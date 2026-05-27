@@ -1,5 +1,5 @@
 """
-Cost and latency analysis utilities for the evaluation results.
+Compute measured latency and token economics from evaluation results.
 """
 
 from __future__ import annotations
@@ -15,97 +15,76 @@ load_dotenv()
 RESULTS_PATH = Path(__file__).resolve().parent / "results.json"
 OUTPUT_PATH = Path(__file__).resolve().parent / "cost_latency_table.md"
 
-PRICING = {
+PRICING_PER_MILLION = {
     "gpt-4.1": {"input": 2.00, "output": 8.00},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
 }
 
 
-def estimate_tokens(text: str) -> int:
-    """
-    Estimate token count with a lightweight word-based heuristic.
-    """
-    return int(len(text.split()) * 1.3)
+def _percentile(sorted_values: list[float], percentile: float) -> float:
+    """Compute a simple percentile from a sorted list."""
+    if not sorted_values:
+        return 0.0
+    index = max(0, min(len(sorted_values) - 1, int(round(percentile * (len(sorted_values) - 1)))))
+    return sorted_values[index]
 
 
 def generate_report() -> None:
-    """
-    Build a Markdown cost and latency summary from evaluation results.
-    """
+    """Create a markdown table with measured latency and cost metrics."""
     if not RESULTS_PATH.exists():
         raise FileNotFoundError(f"Run run_eval.py first. Missing {RESULTS_PATH}")
 
-    data = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
-    stats = {
-        "oss": {"calls": 0, "latency": 0.0, "input_tokens": 0, "output_tokens": 0},
-        "frontier": {
-            "calls": 0,
-            "latency": 0.0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-        },
-    }
-
-    for record in data:
-        stats["oss"]["calls"] += 1
-        stats["oss"]["latency"] += float(record["oss"]["latency_sec"])
-        stats["oss"]["input_tokens"] += estimate_tokens(record["prompt"])
-        stats["oss"]["output_tokens"] += estimate_tokens(record["oss"]["response"])
-
-        stats["frontier"]["calls"] += 1
-        stats["frontier"]["latency"] += float(record["frontier"]["latency_sec"])
-        stats["frontier"]["input_tokens"] += estimate_tokens(record["prompt"])
-        stats["frontier"]["output_tokens"] += estimate_tokens(
-            record["frontier"]["response"]
-        )
-
-    oss_mean_latency = (
-        stats["oss"]["latency"] / stats["oss"]["calls"] if stats["oss"]["calls"] else 0.0
-    )
-    frontier_mean_latency = (
-        stats["frontier"]["latency"] / stats["frontier"]["calls"]
-        if stats["frontier"]["calls"]
-        else 0.0
-    )
-
+    rows = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
     frontier_model = os.getenv("FRONTIER_MODEL", "gpt-4.1")
-    pricing = PRICING.get(frontier_model, PRICING["gpt-4.1"])
-    frontier_input_cost = (
-        stats["frontier"]["input_tokens"] / 1_000_000
-    ) * pricing["input"]
-    frontier_output_cost = (
-        stats["frontier"]["output_tokens"] / 1_000_000
-    ) * pricing["output"]
-    frontier_total_cost = frontier_input_cost + frontier_output_cost
+    pricing = PRICING_PER_MILLION.get(frontier_model, PRICING_PER_MILLION["gpt-4.1"])
 
-    oss_tokens_per_second = (
-        stats["oss"]["output_tokens"] / stats["oss"]["latency"]
-        if stats["oss"]["latency"]
+    oss_latencies = [float(row["oss"]["response_time_ms"]) for row in rows]
+    frontier_latencies = [float(row["frontier"]["response_time_ms"]) for row in rows]
+    oss_tokens = [int(row["oss"]["token_count"]) for row in rows]
+    frontier_tokens = [int(row["frontier"]["token_count"]) for row in rows]
+    frontier_input_tokens = [int(row["frontier"]["input_tokens"]) for row in rows]
+    frontier_output_tokens = [int(row["frontier"]["output_tokens"]) for row in rows]
+
+    oss_avg_latency = sum(oss_latencies) / len(oss_latencies) if oss_latencies else 0.0
+    frontier_avg_latency = (
+        sum(frontier_latencies) / len(frontier_latencies) if frontier_latencies else 0.0
+    )
+    oss_p95_latency = _percentile(sorted(oss_latencies), 0.95)
+    frontier_p95_latency = _percentile(sorted(frontier_latencies), 0.95)
+    oss_avg_tokens = sum(oss_tokens) / len(oss_tokens) if oss_tokens else 0.0
+    frontier_avg_tokens = (
+        sum(frontier_tokens) / len(frontier_tokens) if frontier_tokens else 0.0
+    )
+
+    avg_frontier_input = (
+        sum(frontier_input_tokens) / len(frontier_input_tokens)
+        if frontier_input_tokens
         else 0.0
     )
-    frontier_tokens_per_second = (
-        stats["frontier"]["output_tokens"] / stats["frontier"]["latency"]
-        if stats["frontier"]["latency"]
+    avg_frontier_output = (
+        sum(frontier_output_tokens) / len(frontier_output_tokens)
+        if frontier_output_tokens
         else 0.0
     )
+    frontier_cost_per_call = (
+        (avg_frontier_input / 1_000_000) * pricing["input"]
+        + (avg_frontier_output / 1_000_000) * pricing["output"]
+    )
+    frontier_cost_per_1k = frontier_cost_per_call * 1000
 
     markdown = f"""# Cost & Latency Analysis
 
-| Metric | OSS (Qwen 0.5B) | Frontier ({frontier_model}) |
-|--------|-----------------|-----------------------------|
-| Total API Calls | {stats['oss']['calls']} | {stats['frontier']['calls']} |
-| Mean Latency (s) | {oss_mean_latency:.3f} | {frontier_mean_latency:.3f} |
-| Total Input Tokens (est.) | {stats['oss']['input_tokens']:,} | {stats['frontier']['input_tokens']:,} |
-| Total Output Tokens (est.) | {stats['oss']['output_tokens']:,} | {stats['frontier']['output_tokens']:,} |
-| Deployment Cost | $0.00 (HF Spaces Free Tier) | ${frontier_total_cost:.4f} |
-| Tokens / Second (mean) | {oss_tokens_per_second:.1f} | {frontier_tokens_per_second:.1f} |
+| Model | Avg Latency (ms) | p95 Latency (ms) | Avg Tokens | Cost per 1k calls ($) |
+|-------|------------------:|-----------------:|-----------:|----------------------:|
+| OSS (Qwen 0.5B) | {oss_avg_latency:.2f} | {oss_p95_latency:.2f} | {oss_avg_tokens:.2f} | 0.00 |
+| Frontier ({frontier_model}) | {frontier_avg_latency:.2f} | {frontier_p95_latency:.2f} | {frontier_avg_tokens:.2f} | {frontier_cost_per_1k:.4f} |
 
 ### Notes
-- OSS deployment cost assumes Hugging Face Spaces free-tier CPU hosting.
-- Frontier pricing uses the configured OpenAI model's public token pricing.
-- Token counts are estimated via `len(text.split()) * 1.3`.
-- Frontier latency includes API round-trip time; OSS latency is local generation time.
+- OSS latency is measured from actual local inference runtime and is suitable for HF Spaces CPU benchmarking.
+- Frontier token counts come from OpenAI usage objects, including tool-call follow-up requests when present.
+- Frontier cost per 1k calls uses the configured model's public input/output pricing.
 """
 
     OUTPUT_PATH.write_text(markdown, encoding="utf-8")

@@ -24,12 +24,17 @@ class Observability:
         self._client = None
         public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
         secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+        base_url = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 
         if public_key and secret_key:
             try:
                 from langfuse import Langfuse
 
-                self._client = Langfuse()
+                self._client = Langfuse(
+                    public_key=public_key,
+                    secret_key=secret_key,
+                    host=base_url,
+                )
             except Exception:
                 self._client = None
 
@@ -56,6 +61,11 @@ class Observability:
         except Exception:
             # Observability must never take down inference paths.
             pass
+
+    @property
+    def enabled(self) -> bool:
+        """Whether a real Langfuse client is available."""
+        return self._client is not None
 
 
 if __name__ == "__main__":

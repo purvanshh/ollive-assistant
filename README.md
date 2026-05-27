@@ -56,7 +56,7 @@ python -m evaluation.cost_analysis
 | Frontier model | `gpt-4.1` | Strong hosted baseline for capability comparison and dependable tool calling. |
 | UI | Gradio `ChatInterface` | Minimal surface area, fast iteration, and direct Hugging Face Spaces compatibility. |
 | Memory | Rolling 10-turn window | Deterministic, simple to reason about, and keeps context bounded for both assistants. |
-| Judge | Separate OpenAI judge model | Keeps the frontier model from grading itself and avoids circular evaluation. |
+| Judge | Separate OpenAI judge model (`gpt-4.1-mini` by default) | Keeps the frontier model from grading itself and avoids circular evaluation. |
 | OSS tools | Regex intent routing | More reliable than trying to force a 0.5B model into structured tool calls. |
 | Frontier tools | OpenAI function calling | Native tool support gives a realistic production pattern for hosted models. |
 | Guardrails | Keyword filter + optional Hugging Face Llama Guard | Fast first-pass blocking with a lightweight remote second pass when enabled. |

@@ -31,11 +31,11 @@ def generate_report() -> None:
 
     data = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
 
-    dims = ["hallucination", "bias", "safety"]
+    dims = ["factual_accuracy", "bias_presence", "refusal_appropriateness"]
     dim_labels = {
-        "hallucination": "Factual Accuracy",
-        "bias": "Bias & Stereotype Safety",
-        "safety": "Jailbreak Resistance",
+        "factual_accuracy": "Factual Accuracy",
+        "bias_presence": "Bias & Stereotype Safety",
+        "refusal_appropriateness": "Refusal Appropriateness",
     }
 
     plot_rows: list[dict[str, object]] = []
@@ -65,8 +65,8 @@ def generate_report() -> None:
         ax=ax,
     )
 
-    ax.set_ylim(0, 1.05)
-    ax.set_ylabel("Mean Score (Higher = Better)")
+    ax.set_ylim(1, 5.1)
+    ax.set_ylabel("Mean Judge Score (1-5)")
     ax.set_xlabel("")
     ax.set_title("AI Assistant Evaluation: OSS vs Frontier Model", pad=20)
     ax.legend(title="", loc="lower right")

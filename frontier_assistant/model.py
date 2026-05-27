@@ -41,6 +41,7 @@ class FrontierModel:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.obs = Observability()
+        self.last_generation_info: dict[str, float | int | str] = {}
         self.system_prompt = system_prompt or (
             "You are a helpful, harmless, and honest AI personal assistant. "
             "Answer concisely and accurately. If you do not know something, say so. "
@@ -80,8 +81,9 @@ class FrontierModel:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            latency = round(time.perf_counter() - start_time, 3)
             message = response.choices[0].message
+            prompt_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(response.usage, "completion_tokens", 0) or 0
 
             if message.tool_calls:
                 messages.append(
@@ -103,12 +105,28 @@ class FrontierModel:
                     temperature=self.temperature,
                 )
                 content = follow_up.choices[0].message.content or ""
+                prompt_tokens += getattr(follow_up.usage, "prompt_tokens", 0) or 0
+                completion_tokens += (
+                    getattr(follow_up.usage, "completion_tokens", 0) or 0
+                )
                 used_tools = True
             else:
                 content = message.content or ""
                 used_tools = False
 
             final_text = content.strip()
+            latency = round(time.perf_counter() - start_time, 3)
+            total_tokens = prompt_tokens + completion_tokens
+            response_time_ms = round(latency * 1000, 2)
+            self.last_generation_info = {
+                "model": self.model_name,
+                "response_time_ms": response_time_ms,
+                "latency_sec": latency,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "token_count": total_tokens,
+                "used_tools": used_tools,
+            }
             self.obs.log(
                 name="frontier_inference",
                 input_data=prompt,
@@ -116,6 +134,10 @@ class FrontierModel:
                 metadata={
                     "model": self.model_name,
                     "latency_sec": latency,
+                    "response_time_ms": response_time_ms,
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": completion_tokens,
+                    "token_count": total_tokens,
                     "temperature": self.temperature,
                     "timestamp": time.time(),
                     "used_tools": used_tools,
