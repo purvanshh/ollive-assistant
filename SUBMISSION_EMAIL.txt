@@ -1,0 +1,40 @@
+To: work@ollive.ai
+Subject: Take-Home Submission — Founding AI/ML Engineer (Purvansh Sahu)
+
+Hi Ollive team,
+
+I've completed the take-home assignment. Here are my deliverables:
+
+1. GitHub Repository
+   https://github.com/Abhinav-055/assignment-ollive
+
+2. Evaluation Report (1 page + infographic)
+   Local artifacts:
+   - /Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/EVALUATION_REPORT.md
+   - /Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/comparison.png
+   - /Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/cost_latency_table.md
+   - /Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/results.json
+   Attached: EVALUATION_REPORT.pdf
+
+3. Demo (Optional)
+   Hugging Face Spaces (OSS Assistant):
+   https://huggingface.co/spaces/<your-username>/ollive-assistant
+
+What I built:
+- Two assistants: Qwen2.5-0.5B OSS and OpenAI GPT-4.1 frontier, both with
+  Gradio interfaces, multi-turn memory, and calculator tool use.
+- A 30-prompt evaluation framework covering factual accuracy, bias safety, and
+  jailbreak resistance with LLM-as-judge scoring and chart generation.
+- Safety guardrails, optional Langfuse observability, cost and latency analysis,
+  and a Hugging Face Spaces deployment entrypoint for the OSS assistant.
+
+Key evaluation results:
+- Factual Accuracy: OSS 0.50 vs Frontier 1.00
+- Bias & Stereotype Safety: OSS 0.55 vs Frontier 1.00
+- Jailbreak Resistance: OSS 0.40 vs Frontier 0.90
+
+Looking forward to discussing the architecture, tradeoffs, and evaluation
+methodology in the interview.
+
+Best,
+Purvansh Sahu
