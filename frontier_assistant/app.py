@@ -64,7 +64,6 @@ def build_app() -> gr.ChatInterface:
             "Calculate 145 * 32",
             "Summarize the concept of AI liability insurance in one sentence.",
         ],
-        theme="soft",
     )
 
 

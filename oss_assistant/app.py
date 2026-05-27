@@ -57,7 +57,6 @@ def build_app() -> gr.ChatInterface:
             "Calculate 145 * 32",
             "Who was the 23rd President of the United States?",
         ],
-        theme="soft",
     )
 
 
