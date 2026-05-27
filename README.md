@@ -1,20 +1,33 @@
+---
+title: Ollive OSS Assistant
+emoji: "🫒"
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: 6.15.0
+app_file: space_app.py
+pinned: false
+license: mit
+---
+
 # Ollive Assistant
 
 Full-stack ML engineering take-home for a Founding AI/ML Engineer role. The
 repo compares an open-source personal assistant against a frontier assistant,
-then evaluates them on factuality, bias, and jailbreak resistance.
+then evaluates them on factual accuracy, bias safety, and refusal behavior.
 
 ## Quick Start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/purvanshh/ollive-assistant.git
 cd ollive-assistant
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Populate `.env` with your `OPENAI_API_KEY` and `HF_TOKEN`. Langfuse keys are
-optional and only needed if you want observability traces.
+Populate `.env` with your OpenAI, Hugging Face, and optional Langfuse keys.
 
 ## Run The Apps
 
@@ -23,6 +36,9 @@ python -m oss_assistant.app
 python -m frontier_assistant.app
 python space_app.py
 ```
+
+`oss_assistant.app.build_app()` is a valid Gradio `ChatInterface` constructor and
+is used directly by `space_app.py` for Hugging Face Spaces deployment.
 
 ## Run Evaluation
 
@@ -37,30 +53,30 @@ python -m evaluation.cost_analysis
 | Component | Choice | Why |
 |-----------|--------|-----|
 | OSS model | `Qwen/Qwen2.5-0.5B-Instruct` | Small enough for Hugging Face Spaces free-tier CPU deployment while still supporting instruction following. |
-| Frontier model | `gpt-4.1` | Strong baseline for capability comparison and dependable tool calling. |
+| Frontier model | `gpt-4.1` | Strong hosted baseline for capability comparison and dependable tool calling. |
 | UI | Gradio `ChatInterface` | Minimal surface area, fast iteration, and direct Hugging Face Spaces compatibility. |
 | Memory | Rolling 10-turn window | Deterministic, simple to reason about, and keeps context bounded for both assistants. |
-| Judge | OpenAI rubric-based judge | Reuses the same provider as the frontier assistant and keeps operational setup simpler. |
+| Judge | Separate OpenAI judge model | Keeps the frontier model from grading itself and avoids circular evaluation. |
 | OSS tools | Regex intent routing | More reliable than trying to force a 0.5B model into structured tool calls. |
 | Frontier tools | OpenAI function calling | Native tool support gives a realistic production pattern for hosted models. |
-| Guardrails | Keyword filter + optional Llama Guard | Fast first-pass blocking with an optional second pass when you want deeper screening. |
-| Observability | Optional Langfuse | Production-friendly tracing without making local development brittle. |
+| Guardrails | Keyword filter + optional Hugging Face Llama Guard | Fast first-pass blocking with a lightweight remote second pass when enabled. |
+| Observability | Langfuse | Optional locally, but deployment-ready for hosted tracing in Spaces. |
 
 ## Tradeoffs Made
 
 1. The OSS assistant uses prompt-side tool detection rather than model-native function calls because small local models are brittle at JSON/tool protocol adherence.
-2. The evaluation harness is single-turn and intentionally lightweight; that keeps grading fast but does not fully test long conversational drift.
-3. The safety layer currently focuses on a compact blocklist plus optional external classification rather than a more comprehensive policy engine.
-4. Token cost analysis uses a word-based heuristic instead of exact tokenizer accounting so it stays dependency-light and model-agnostic.
-5. Hugging Face Spaces deployment targets the OSS assistant only, which is the right public demo surface but not a full hosted comparison environment.
+2. The evaluation harness is intentionally lightweight and CPU-friendly, which keeps it practical for take-home grading but leaves room for richer multi-turn benchmarks.
+3. The Hugging Face Space only hosts the OSS path; the frontier model remains API-backed to keep hosted cost and complexity low.
+4. The guardrail blocklist is intentionally compact and explainable, trading completeness for clarity and free-tier deployability.
+5. Latency and token instrumentation are recorded at runtime so cost analysis can use real measurements instead of pure heuristics.
 
 ## What I Would Improve With More Time
 
 1. Add persistent long-term memory with retrieval rather than limiting context to 10 turns.
-2. Replace the OSS regex calculator trigger with a more general tool router and structured outputs fine-tuning.
-3. Add web search or document retrieval so both assistants can ground answers on recent or user-provided data.
-4. Expand evaluation to multi-turn scenarios, latency percentiles, and human spot-checking.
-5. Add stronger safety instrumentation such as policy-specific refusal tests and audit dashboards.
+2. Replace the OSS regex calculator trigger with a broader tool router and structured output fine-tuning.
+3. Add retrieval or web search grounding for recent-event and document-based questions.
+4. Expand evaluation to multi-turn scenarios, human spot checks, and longitudinal regression tracking.
+5. Add stronger safety instrumentation such as policy-specific refusal dashboards and moderation analytics.
 
 ## Project Layout
 
@@ -72,7 +88,6 @@ ollive-assistant/
 ├── guardrails/
 ├── shared/
 ├── space_app.py
-├── space_README.md
 ├── requirements.txt
 └── README.md
 ```
@@ -83,14 +98,27 @@ ollive-assistant/
 OPENAI_API_KEY=sk-...
 HF_TOKEN=hf_...
 FRONTIER_MODEL=gpt-4.1
-JUDGE_MODEL=gpt-4.1
+JUDGE_MODEL=gpt-4.1-mini
 LANGFUSE_PUBLIC_KEY=pk-...
 LANGFUSE_SECRET_KEY=sk-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-## Deployment
+## Deploy To Hugging Face Spaces
 
-Use `space_app.py` as the Hugging Face Spaces entry point for the OSS assistant.
+Space URL:
+[https://huggingface.co/spaces/purvanshh/ollive-assistant](https://huggingface.co/spaces/purvanshh/ollive-assistant)
 
-Public Spaces URL placeholder:
-`https://huggingface.co/spaces/<your-username>/ollive-assistant`
+Exact push commands:
+
+```bash
+git remote add space https://huggingface.co/spaces/purvanshh/ollive-assistant
+git push space main
+```
+
+If the `space` remote already exists:
+
+```bash
+git remote set-url space https://huggingface.co/spaces/purvanshh/ollive-assistant
+git push space main
+```
