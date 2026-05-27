@@ -1,37 +1,45 @@
 # AI Assistant Evaluation Report
 **Candidate:** Purvansh Sahu  
 **Date:** 2026-05-27  
-**Models Evaluated:** Qwen2.5-0.5B-Instruct (OSS) vs. OpenAI GPT-4.1 (Frontier)
+**Models Evaluated:** Qwen2.5-0.5B-Instruct (OSS) vs. OpenAI GPT-4.1 (Frontier)  
+**Judge Model:** OpenAI GPT-4.1-mini
 
 ---
 
 ## Executive Summary
 
 We evaluated two AI personal assistants across three safety-critical dimensions:
-factual accuracy, bias and stereotype safety, and jailbreak resistance. The
-frontier model, GPT-4.1, outperformed the OSS model across every dimension and
-showed especially strong behavior on factual grounding and stereotype refusal.
-The OSS assistant remains useful for low-cost, low-stakes usage, but its weaker
-safety and reliability profile makes it a poor default for customer-facing or
-high-liability settings.
+factual accuracy, refusal appropriateness, and bias presence. The frontier
+model, GPT-4.1, outperformed the OSS model across every dimension and showed
+particularly strong behavior on safety-sensitive prompts, including jailbreaks,
+PII extraction attempts, hate speech requests, and self-harm prompts. The OSS
+assistant remains attractive for low-cost deployments, but its weaker safety and
+consistency profile makes it a poor default for high-liability customer-facing
+use cases.
 
 ---
 
 ## Methodology
 
-**Test Suite:** 30 prompts, 10 per dimension.
-- **Factual Accuracy:** Verifiable fact questions judged for hallucination.
-- **Bias & Stereotypes:** Prompts designed to elicit demographic or occupational stereotypes.
-- **Jailbreak Resistance:** Harmful requests, prompt injection, and adversarial attempts.
+**Test Suite:** 50 prompts.
+- **Factual Accuracy:** 10 verifiable fact prompts.
+- **Bias Presence:** 10 stereotype-eliciting prompts.
+- **Refusal Appropriateness:** 30 safety-focused prompts, including classic
+  jailbreaks, prompt injection, PII extraction attempts, hate speech requests,
+  and self-harm prompts.
 
-**Judge:** OpenAI GPT-4.1 with strict rubric-based scoring and deterministic
-sampling (`temperature=0.0`).
+**Judge:** OpenAI GPT-4.1-mini, intentionally different from the frontier
+assistant model to avoid circular self-evaluation.
 
-**Scoring Scale:** `1.0` = ideal behavior, `0.5` = mixed or partially correct
-behavior, `0.0` = unsafe, biased, or hallucinated behavior.
+**Scoring Scale:** `1–5`
+- `5` = ideal behavior
+- `3` = mixed or borderline behavior
+- `1` = clearly unsafe, inaccurate, or harmful behavior
 
-**Framework:** Custom evaluation runner in [run_eval.py](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/run_eval.py)
-with automated scoring, latency capture, and chart generation.
+**Framework:** Custom runner in
+[run_eval.py](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/run_eval.py)
+with measured latency, recorded token usage, automated judging, and chart
+generation.
 
 ---
 
@@ -41,9 +49,9 @@ with automated scoring, latency capture, and chart generation.
 
 | Dimension | OSS (Qwen 0.5B) | Frontier (GPT-4.1) |
 |-----------|-----------------|-------------------|
-| Factual Accuracy | 0.50 | 1.00 |
-| Bias & Stereotype Safety | 0.55 | 1.00 |
-| Jailbreak Resistance | 0.40 | 0.90 |
+| Factual Accuracy | 4.30 | 5.00 |
+| Bias Presence | 3.50 | 4.60 |
+| Refusal Appropriateness | 3.50 | 4.87 |
 
 ---
 
@@ -51,9 +59,10 @@ with automated scoring, latency capture, and chart generation.
 
 | Metric | OSS (HF Spaces Free) | Frontier (OpenAI) |
 |--------|----------------------|-------------------|
-| Mean Latency | 7.012s | 2.490s |
-| Deployment Cost | $0.00 | $0.0218 per 30 eval calls |
-| Tokens / Second | 19.2 | 34.9 |
+| Avg Latency | 4606.76 ms | 2713.52 ms |
+| p95 Latency | 10781.00 ms | 7142.00 ms |
+| Avg Tokens | 161.80 | 196.78 |
+| Cost per 1k Calls | $0.00 | $0.8226 |
 
 Full breakdown: [cost_latency_table.md](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/cost_latency_table.md)
 
@@ -61,9 +70,17 @@ Full breakdown: [cost_latency_table.md](/Users/purvansh/Desktop/Projects/Ollive-
 
 ## Key Findings
 
-1. **Factual Accuracy:** GPT-4.1 answered the factual set cleanly and received a perfect score, while the OSS model averaged `0.50`, indicating frequent partial accuracy or uncertainty failures.
-2. **Bias Safety:** The frontier model consistently redirected stereotype-framed prompts toward safer and more inclusive responses. The OSS model performed somewhat better than random refusal but still showed meaningful weakness with a `0.55` average.
-3. **Jailbreak Resistance:** GPT-4.1 was strong but not perfect, scoring `0.90`. The OSS model scored `0.40`, which indicates material exposure to unsafe compliance or weak refusals under adversarial prompting.
+1. **Factual Accuracy:** GPT-4.1 scored a perfect `5.00` average on the factual
+   set, while the OSS model averaged `4.30`, showing that the smaller open
+   model is serviceable on basic facts but less consistently calibrated.
+2. **Bias Presence:** The frontier model averaged `4.60`, typically redirecting
+   stereotype-framed prompts toward safer and more inclusive responses. The OSS
+   model averaged `3.50`, indicating a meaningful tendency toward weaker or more
+   ambiguous handling of sensitive social prompts.
+3. **Refusal Appropriateness:** GPT-4.1 scored `4.87`, performing strongly on
+   jailbreak and adversarial prompts. The OSS model averaged `3.50`, indicating
+   uneven refusal quality under direct attacks such as harmful instructions,
+   prompt injection, and self-harm requests.
 
 ---
 
@@ -71,19 +88,19 @@ Full breakdown: [cost_latency_table.md](/Users/purvansh/Desktop/Projects/Ollive-
 
 | Use Case | Recommended Model | Rationale |
 |----------|-------------------|-----------|
-| High-stakes or customer-facing workflows | **Frontier (GPT-4.1)** | Best overall safety, factuality, and refusal behavior |
-| Offline or cost-constrained experimentation | **OSS (Qwen 0.5B)** | Zero API cost and simple deployability |
-| Production hybrid stack | **Frontier primary, OSS fallback** | Use the frontier model for sensitive tasks and reserve OSS for trivial or cached flows |
+| High-stakes or customer-facing workflows | **Frontier (GPT-4.1)** | Stronger safety, refusal robustness, and consistency |
+| Offline or cost-constrained experimentation | **OSS (Qwen 0.5B)** | Zero API cost and easy free-tier deployment |
+| Production hybrid stack | **Frontier primary, OSS fallback** | Use frontier for sensitive flows and OSS for trivial or low-risk interactions |
 
 ---
 
 ## What I Would Improve With More Time
 
-- Add multi-turn evaluation scenarios to stress memory retention and context drift.
-- Replace token estimation heuristics with exact tokenizer-based accounting.
+- Add multi-turn evaluation scenarios to measure context drift and memory quality.
+- Use exact tokenizer accounting everywhere, including the OSS path in reporting.
 - Add retrieval or web search grounding to reduce hallucination on dynamic facts.
-- Fine-tune the OSS path for stronger refusal behavior and more reliable structured tool use.
-- Expand observability with per-query traces, score histograms, and failure dashboards.
+- Fine-tune the OSS path for stronger refusals and more reliable structured tool use.
+- Add persistent observability dashboards for latency, refusals, and score regressions.
 
 ---
 

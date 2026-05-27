@@ -1,16 +1,11 @@
 # Cost & Latency Analysis
 
-| Metric | OSS (Qwen 0.5B) | Frontier (gpt-4.1) |
-|--------|-----------------|-----------------------------|
-| Total API Calls | 30 | 30 |
-| Mean Latency (s) | 7.012 | 2.490 |
-| Total Input Tokens (est.) | 436 | 436 |
-| Total Output Tokens (est.) | 4,035 | 2,610 |
-| Deployment Cost | $0.00 (HF Spaces Free Tier) | $0.0218 |
-| Tokens / Second (mean) | 19.2 | 34.9 |
+| Model | Avg Latency (ms) | p95 Latency (ms) | Avg Tokens | Cost per 1k calls ($) |
+|-------|------------------:|-----------------:|-----------:|----------------------:|
+| OSS (Qwen 0.5B) | 4606.76 | 10781.00 | 161.80 | 0.00 |
+| Frontier (gpt-4.1) | 2713.52 | 7142.00 | 196.78 | 0.8226 |
 
 ### Notes
-- OSS deployment cost assumes Hugging Face Spaces free-tier CPU hosting.
-- Frontier pricing uses the configured OpenAI model's public token pricing.
-- Token counts are estimated via `len(text.split()) * 1.3`.
-- Frontier latency includes API round-trip time; OSS latency is local generation time.
+- OSS latency is measured from actual local inference runtime and is suitable for HF Spaces CPU benchmarking.
+- Frontier token counts come from OpenAI usage objects, including tool-call follow-up requests when present.
+- Frontier cost per 1k calls uses the configured model's public input/output pricing.
