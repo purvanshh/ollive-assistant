@@ -8,6 +8,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import matplotlib
+
+# Force a headless-safe backend so report generation works in terminals,
+# CI, and Codex without trying to initialize the macOS AppKit UI stack.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
