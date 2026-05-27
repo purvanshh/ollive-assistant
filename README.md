@@ -1,15 +1,3 @@
----
-title: Ollive OSS Assistant
-emoji: "🫒"
-colorFrom: blue
-colorTo: green
-sdk: gradio
-sdk_version: 6.15.0
-app_file: space_app.py
-pinned: false
-license: mit
----
-
 # Ollive Assistant
 
 Full-stack ML engineering take-home for a Founding AI/ML Engineer role. The
