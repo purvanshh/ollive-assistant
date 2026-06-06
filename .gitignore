@@ -1,4 +1,28 @@
+# Env files
 .env
-__pycache__
-.venv
-node_modules
+.env.local
+.env.*.local
+
+# Python caches and environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+
+# Frontend caches and build dirs
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Log files
+*.log
