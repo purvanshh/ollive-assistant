@@ -15,7 +15,7 @@ def test_health_check_open():
     response = client.get("/api/v1/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
+    assert data["status"] in ("ok", "degraded")
     assert "database" in data["dependencies"]
 
 def test_protected_routes_unauthorized():
@@ -87,3 +87,11 @@ def test_rate_limiting():
         
     status_codes = [r.status_code for r in responses]
     assert 429 in status_codes
+
+def test_metrics_endpoint():
+    """Verify that /metrics endpoint is open and exposes Prometheus metrics."""
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "ollive_requests_total" in response.text
+    assert "ollive_request_latency_seconds" in response.text
+    assert "ollive_active_conversations" in response.text

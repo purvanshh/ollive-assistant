@@ -62,9 +62,33 @@ async def structured_logging_middleware(request: Request, call_next):
     request.state.request_id = request_id
     
     start_time = time.perf_counter()
+    status_code = 500
     
     try:
         response = await call_next(request)
+        status_code = response.status_code
+        
+        process_time = (time.perf_counter() - start_time) * 1000
+        log_data = {
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "ip": request.client.host if request.client else "unknown",
+            "status_code": status_code,
+            "latency_ms": round(process_time, 2)
+        }
+        logger.info(json.dumps(log_data))
+        
+        response.headers["X-Request-ID"] = request_id
+        
+        # Record Prometheus metrics
+        path = request.url.path
+        if path != "/metrics":
+            from backend.app.metrics import REQUEST_COUNT, REQUEST_LATENCY
+            REQUEST_COUNT.labels(method=request.method, endpoint=path, status_code=str(status_code)).inc()
+            REQUEST_LATENCY.labels(method=request.method, endpoint=path).observe(process_time / 1000.0)
+            
+        return response
     except Exception as e:
         process_time = (time.perf_counter() - start_time) * 1000
         log_data = {
@@ -77,22 +101,15 @@ async def structured_logging_middleware(request: Request, call_next):
             "error": str(e)
         }
         logger.error(json.dumps(log_data))
-        raise e
         
-    process_time = (time.perf_counter() - start_time) * 1000
-    
-    log_data = {
-        "request_id": request_id,
-        "method": request.method,
-        "path": request.url.path,
-        "ip": request.client.host if request.client else "unknown",
-        "status_code": response.status_code,
-        "latency_ms": round(process_time, 2)
-    }
-    logger.info(json.dumps(log_data))
-    
-    response.headers["X-Request-ID"] = request_id
-    return response
+        # Record Prometheus metrics
+        path = request.url.path
+        if path != "/metrics":
+            from backend.app.metrics import REQUEST_COUNT, REQUEST_LATENCY
+            REQUEST_COUNT.labels(method=request.method, endpoint=path, status_code="500").inc()
+            REQUEST_LATENCY.labels(method=request.method, endpoint=path).observe(process_time / 1000.0)
+            
+        raise e
 
 # Include Routers
 from backend.app.routers import health, conversations, chat, evaluations
@@ -100,6 +117,10 @@ app.include_router(health.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(evaluations.router, prefix="/api/v1")
+
+# Mount Prometheus metrics endpoint
+from prometheus_client import make_asgi_app
+app.mount("/metrics", make_asgi_app())
 
 @app.get("/")
 def read_root():
