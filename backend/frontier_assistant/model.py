@@ -9,7 +9,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Generator
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -147,11 +147,38 @@ class FrontierModel:
         except Exception as exc:  # noqa: BLE001 - keep the eval loop alive.
             return f"[ERROR: {exc}]"
 
+    def generate_stream(
+        self,
+        prompt: str,
+        history: Optional[list[dict[str, str]]] = None,
+    ) -> Generator[str, None, None]:
+        """Stream chunks from OpenAI chat completions API."""
+        messages = [{"role": "system", "content": self.system_prompt}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                stream=True
+            )
+            for chunk in stream:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    yield content
+        except Exception as exc:
+            yield f"[ERROR: {exc}]"
+
 
 # Compatibility alias so the existing scaffold can import the new implementation.
 FrontierAssistantModel = FrontierModel
 
 
 if __name__ == "__main__":
+    from typing import Generator
     model = FrontierModel(model_name="gpt-4o-mini")
     print(model.generate("What is 2 + 2?", []))
