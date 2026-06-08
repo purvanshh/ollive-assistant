@@ -29,6 +29,7 @@ interface Message {
   model_used: string | null;
   tokens_used: number | null;
   cost_usd: number | null;
+  routing_reason?: string | null;
   created_at: string;
 }
 
@@ -58,9 +59,16 @@ export default function Home() {
 
   // Message Input & Generation
   const [input, setInput] = useState<string>("");
-  const [modelOverride, setModelOverride] = useState<string>("oss"); // "oss", "frontier"
+  const [modelOverride, setModelOverride] = useState<string>("auto"); // "auto", "oss", "frontier"
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [streamText, setStreamText] = useState<string>("");
+
+  // Active streaming metadata
+  const [streamModel, setStreamModel] = useState<string>("");
+  const [streamRoutingReason, setStreamRoutingReason] = useState<string>("");
+  const [streamCost, setStreamCost] = useState<number>(0.0);
+  const [streamStatus, setStreamStatus] = useState<string>("");
+  const [streamToolQuery, setStreamToolQuery] = useState<string>("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -113,6 +121,45 @@ export default function Home() {
     } catch {
       setHealth(null);
     }
+  };
+
+  // Pre-streaming cost estimator helper
+  const estimateCost = (text: string) => {
+    if (!text.trim()) return null;
+    
+    const isFrontier = modelOverride === "frontier" || (
+      modelOverride === "auto" && (() => {
+        const lower = text.toLowerCase();
+        const codingKeywords = [
+          "python", "javascript", "typescript", "c++", "rust", "java", "html", "css", 
+          "function", "class", "write code", "implement", "coding", "program", "regex", 
+          "debugging", "debug", "compile", "script", "algorithm", "database query", "sql"
+        ];
+        const mathComplexKeywords = [
+          "solve", "equation", "formula", "calculus", "algebra", "integral", "derivative", 
+          "theorem", "matrix", "geometry", "proof", "trigonometry"
+        ];
+        const reasoningKeywords = [
+          "explain step-by-step", "explain step by step", "why does", "analyze", 
+          "compare and contrast", "logical", "critical thinking", "implications", 
+          "pros and cons", "evaluate", "detailed breakdown", "summarize the argument"
+        ];
+        const multimodalKeywords = [
+          "image", "photo", "picture", "screenshot", "diagram", "pdf", "csv"
+        ];
+        return codingKeywords.some(kw => lower.includes(kw)) ||
+               mathComplexKeywords.some(kw => lower.includes(kw)) ||
+               reasoningKeywords.some(kw => lower.includes(kw)) ||
+               multimodalKeywords.some(kw => lower.includes(kw));
+      })()
+    );
+
+    if (isFrontier) {
+      const inputTokens = Math.max(1, Math.ceil(text.length / 4));
+      const cost = (inputTokens * 5.0) / 1_000_000;
+      return { cost, model: "Frontier (GPT-4)" };
+    }
+    return null;
   };
 
   // API Call: Fetch Conversations
@@ -246,6 +293,11 @@ export default function Home() {
     setInput("");
     setIsGenerating(true);
     setStreamText("");
+    setStreamModel("");
+    setStreamRoutingReason("");
+    setStreamCost(0.0);
+    setStreamStatus("");
+    setStreamToolQuery("");
 
     // Append User Message temporarily to UI
     const tempUserMsg: Message = {
@@ -309,12 +361,21 @@ export default function Home() {
             }
             try {
               const parsed = JSON.parse(dataStr);
-              const content = parsed.choices?.[0]?.delta?.content || "";
-              modelUsed = parsed.model || "";
-              costVal = parsed.cost || 0.0;
-              
-              accumulatedContent += content;
-              setStreamText(accumulatedContent);
+              if (parsed.status === "searching") {
+                setStreamStatus("searching");
+                setStreamToolQuery(parsed.query || "");
+              } else {
+                if (parsed.status === "completed_search") {
+                  setStreamStatus("");
+                }
+                const content = parsed.choices?.[0]?.delta?.content || "";
+                if (parsed.model) setStreamModel(parsed.model);
+                if (parsed.routing_reason) setStreamRoutingReason(parsed.routing_reason);
+                if (parsed.cost !== undefined) setStreamCost(parsed.cost);
+                
+                accumulatedContent += content;
+                setStreamText(accumulatedContent);
+              }
             } catch (err) {
               console.error("Failed to parse chunk JSON:", err, "line:", trimmed);
             }
@@ -495,13 +556,14 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
               <Zap className="h-3.5 w-3.5 text-lime-500" />
-              <Select value={modelOverride} onValueChange={(val) => handleModelChange(val || "oss")}>
+              <Select value={modelOverride} onValueChange={(val) => handleModelChange(val || "auto")}>
                 <SelectTrigger className="border-0 bg-transparent h-5 text-xs text-zinc-200 focus:ring-0 p-0 font-medium">
                   <SelectValue placeholder="Model Preference" />
                 </SelectTrigger>
                 <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-200">
-                  <SelectItem value="oss">Local OSS (Router)</SelectItem>
-                  <SelectItem value="frontier">Gemini / Frontier</SelectItem>
+                  <SelectItem value="auto">Auto (Router)</SelectItem>
+                  <SelectItem value="oss">Force OSS</SelectItem>
+                  <SelectItem value="frontier">Force Frontier</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -544,16 +606,21 @@ export default function Home() {
                 
                 {/* Message Metadata Badges */}
                 {msg.role === "assistant" && (
-                  <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
+                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
                       {msg.model_used || "Local OSS"}
                     </span>
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 flex items-center gap-1">
+                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 flex items-center gap-1 text-zinc-300">
                       {msg.cost_usd && msg.cost_usd > 0 
                         ? `$${msg.cost_usd.toFixed(6)}` 
                         : "Free (local)"}
                     </span>
-                    {msg.tokens_used ? <span>{msg.tokens_used} tkn</span> : null}
+                    {msg.tokens_used ? <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">{msg.tokens_used} tkn</span> : null}
+                    {msg.routing_reason && (
+                      <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20">
+                        Reason: {msg.routing_reason}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -561,19 +628,42 @@ export default function Home() {
           ))}
 
           {/* Active SSE Streaming Placeholder Message */}
-          {isGenerating && streamText && (
-            <div className="flex items-start gap-3.5 flex-row">
+          {isGenerating && (streamText || streamStatus === "searching") && (
+            <div className="flex items-start gap-3.5 flex-row animate-fade-in">
               <div className="p-2 rounded-xl shrink-0 bg-lime-950/20 text-lime-400 border border-lime-900/30">
                 <Database className="h-4 w-4" />
               </div>
               <div className="space-y-1.5 max-w-[75%]">
-                <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5">
-                  <p className="whitespace-pre-wrap">{streamText}</p>
-                </div>
-                <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
+                {streamStatus === "searching" && (
+                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5 flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-lime-500"></div>
+                    <span>Searching web for "{streamToolQuery}"...</span>
+                  </div>
+                )}
+                {streamText && (
+                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5">
+                    <p className="whitespace-pre-wrap">{streamText}</p>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
                   <span className="animate-pulse bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-900/40">
-                    streaming...
+                    {streamStatus === "searching" ? "thinking..." : "streaming..."}
                   </span>
+                  {streamModel && (
+                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
+                      {streamModel}
+                    </span>
+                  )}
+                  {streamModel && (
+                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
+                      {streamCost > 0 ? `$${streamCost.toFixed(6)}` : "Free (local)"}
+                    </span>
+                  )}
+                  {streamRoutingReason && (
+                    <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20 animate-fade-in">
+                      Reason: {streamRoutingReason}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -613,6 +703,20 @@ export default function Home() {
 
         {/* Message Input Form (Sticky bottom) */}
         <div className="p-6 border-t border-zinc-800 bg-zinc-900/10 backdrop-blur-md">
+          {(() => {
+            const estimation = estimateCost(input);
+            if (estimation) {
+              return (
+                <div className="mb-3 flex items-center gap-2 text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
+                  <Sparkles className="h-3.5 w-3.5 animate-pulse text-lime-400" />
+                  <span>
+                    Detected complex query. Routing to <strong>{estimation.model}</strong>. Est. Input Cost: <strong>${estimation.cost.toFixed(6)}</strong>
+                  </span>
+                </div>
+              );
+            }
+            return null;
+          })()}
           <form onSubmit={handleSendMessage} className="relative flex items-center">
             <Input
               value={input}
