@@ -40,6 +40,7 @@ class MessageResponse(BaseModel):
     model_used: Optional[str]
     tokens_used: Optional[int]
     cost_usd: Optional[float]
+    routing_reason: Optional[str] = None
     created_at: datetime
 
     class Config:

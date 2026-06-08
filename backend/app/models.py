@@ -27,6 +27,7 @@ class Message(Base):
     model_used = Column(String(100), nullable=True)  # 'qwen', 'gemini-2.5-flash', 'blocked'
     tokens_used = Column(Integer, nullable=True)
     cost_usd = Column(Numeric(10, 6), nullable=True)
+    routing_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     conversation = relationship("Conversation", back_populates="messages")

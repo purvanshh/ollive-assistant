@@ -13,6 +13,7 @@ class MessageRepository:
         model_used: Optional[str] = None,
         tokens_used: Optional[int] = None,
         cost_usd: Optional[float] = None,
+        routing_reason: Optional[str] = None,
     ) -> Message:
         message = Message(
             conversation_id=conversation_id,
@@ -21,6 +22,7 @@ class MessageRepository:
             model_used=model_used,
             tokens_used=tokens_used,
             cost_usd=cost_usd,
+            routing_reason=routing_reason,
         )
         db.add(message)
         db.commit()

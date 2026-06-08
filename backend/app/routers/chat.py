@@ -24,7 +24,47 @@ router = APIRouter(
 class ChatRequest(BaseModel):
     conversation_id: str = Field(..., description="The ID of the conversation")
     prompt: str = Field(..., min_length=1, description="The user prompt")
-    model_override: Optional[str] = Field(None, description="Force a specific model ('oss' or 'frontier')")
+    model_override: Optional[str] = Field("auto", description="Force a specific model ('auto', 'oss', or 'frontier')")
+
+def classify_intent(prompt: str) -> tuple[str, str, str]:
+    prompt_lower = prompt.lower()
+    
+    # Complex patterns
+    coding_keywords = [
+        "python", "javascript", "typescript", "c++", "rust", "java", "html", "css", 
+        "function", "class", "write code", "implement", "coding", "program", "regex", 
+        "debugging", "debug", "compile", "script", "algorithm", "database query", "sql"
+    ]
+    math_complex_keywords = [
+        "solve", "equation", "formula", "calculus", "algebra", "integral", "derivative", 
+        "theorem", "matrix", "geometry", "proof", "trigonometry"
+    ]
+    reasoning_keywords = [
+        "explain step-by-step", "explain step by step", "why does", "analyze", 
+        "compare and contrast", "logical", "critical thinking", "implications", 
+        "pros and cons", "evaluate", "detailed breakdown", "summarize the argument"
+    ]
+    multimodal_keywords = [
+        "image", "photo", "picture", "screenshot", "diagram", "pdf", "csv"
+    ]
+    
+    # Check complex intents first
+    if any(kw in prompt_lower for kw in coding_keywords):
+        return "coding", "frontier", "detected coding intent"
+    if any(kw in prompt_lower for kw in math_complex_keywords):
+        return "math", "frontier", "detected complex math intent"
+    if any(kw in prompt_lower for kw in reasoning_keywords):
+        return "reasoning", "frontier", "detected reasoning intent"
+    if any(kw in prompt_lower for kw in multimodal_keywords):
+        return "multimodal", "frontier", "detected multimodal/file intent"
+        
+    # Check simple intents
+    math_simple_indicators = ["+", "-", "*", "/", "calculate", "compute", "add", "subtract", "multiply", "divide"]
+    if any(ind in prompt_lower for ind in math_simple_indicators) and any(char.isdigit() for char in prompt):
+        return "calculator", "oss", "detected simple calculator intent"
+        
+    # Default is simple chat
+    return "simple_chat", "oss", "detected simple chat intent"
 
 def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
     """Helper to calculate approximate cost in USD for frontier APIs."""
@@ -76,7 +116,8 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
             content=reason,
             model_used="blocked",
             tokens_used=0,
-            cost_usd=0.0
+            cost_usd=0.0,
+            routing_reason="safety block"
         )
         
         # Return refusal immediately as a single-event stream
@@ -85,6 +126,7 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                 "id": blocked_msg.id,
                 "choices": [{"delta": {"content": reason}}],
                 "model": "blocked",
+                "routing_reason": "safety block",
                 "cost": 0.0
             }
             yield f"data: {json.dumps(refusal_chunk)}\n\n"
@@ -101,8 +143,18 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
     history = [{"role": m.role, "content": m.content} for m in past_db_messages]
 
     # 4. Resolve model router choice
-    model_override = (payload.model_override or "oss").lower()
+    model_override = (payload.model_override or "auto").lower()
     if model_override == "frontier":
+        selected_model = "frontier"
+        routing_reason = "user override: force frontier"
+    elif model_override == "oss":
+        selected_model = "oss"
+        routing_reason = "user override: force oss"
+    else:
+        # Auto-routing
+        intent, selected_model, routing_reason = classify_intent(payload.prompt)
+
+    if selected_model == "frontier":
         model = FrontierModel()
         model_name = model.model_name
     else:
@@ -127,6 +179,16 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
         )
 
         try:
+            # Yield initial routing metadata chunk
+            init_chunk = {
+                "id": assistant_msg_id,
+                "choices": [{"delta": {"content": ""}}],
+                "model": model_name,
+                "routing_reason": routing_reason,
+                "cost": 0.0
+            }
+            yield f"data: {json.dumps(init_chunk)}\n\n"
+
             # Stream tokens
             for chunk in model.generate_stream(payload.prompt, history):
                 accumulated_text += chunk
@@ -134,6 +196,7 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                     "id": assistant_msg_id,
                     "choices": [{"delta": {"content": chunk}}],
                     "model": model_name,
+                    "routing_reason": routing_reason,
                     "cost": 0.0
                 }
                 yield f"data: {json.dumps(chunk_data)}\n\n"
@@ -153,8 +216,20 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                 content=accumulated_text,
                 model_used=model_name,
                 tokens_used=input_tokens + output_tokens,
-                cost_usd=cost
+                cost_usd=cost,
+                routing_reason=routing_reason
             )
+
+            # Yield final metadata chunk with final cost
+            final_chunk = {
+                "id": assistant_msg_id,
+                "choices": [{"delta": {"content": ""}}],
+                "model": model_name,
+                "routing_reason": routing_reason,
+                "cost": cost,
+                "tokens": input_tokens + output_tokens
+            }
+            yield f"data: {json.dumps(final_chunk)}\n\n"
 
             # Auto-update conversation title if it's the first turn
             if len(past_db_messages) == 0:
@@ -169,6 +244,7 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                 "id": assistant_msg_id,
                 "choices": [{"delta": {"content": f"\n[Streaming Error: {str(e)}]"}}],
                 "model": model_name,
+                "routing_reason": routing_reason,
                 "cost": 0.0
             }
             yield f"data: {json.dumps(error_chunk)}\n\n"
@@ -181,7 +257,8 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                 content=accumulated_text + f"\n[Streaming Error: {str(e)}]",
                 model_used=model_name,
                 tokens_used=0,
-                cost_usd=0.0
+                cost_usd=0.0,
+                routing_reason=routing_reason
             )
         finally:
             yield "data: [DONE]\n\n"
