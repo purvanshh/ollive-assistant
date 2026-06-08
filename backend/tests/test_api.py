@@ -35,6 +35,7 @@ def test_protected_routes_unauthorized():
 def test_conversation_flow_authorized():
     """Verify standard CRUD and chat completions work with correct auth."""
     headers = {"X-API-Key": "test_api_key_12345"}
+    import json
     
     # 1. Create Conversation
     response = client.post(
@@ -54,8 +55,17 @@ def test_conversation_flow_authorized():
         headers=headers
     )
     assert chat_response.status_code == 200
-    chat_data = chat_response.json()
-    assert "stub response" in chat_data["content"]
+    assert "text/event-stream" in chat_response.headers["content-type"]
+    
+    # Read stream chunks
+    lines = [line for line in chat_response.iter_lines() if line]
+    chunks = []
+    for line in lines:
+        if line.startswith("data: ") and not line.endswith("[DONE]"):
+            chunk_data = json.loads(line[6:])
+            chunks.append(chunk_data["choices"][0]["delta"]["content"])
+    response_text = "".join(chunks)
+    assert len(response_text) > 0
     
     # 3. Retrieve messages
     msg_response = client.get(
@@ -74,6 +84,53 @@ def test_conversation_flow_authorized():
         headers=headers
     )
     assert del_response.status_code == 204
+
+def test_chat_guardrail_blocking():
+    """Verify that unsafe prompts are blocked and return a safety refusal."""
+    headers = {"X-API-Key": "test_api_key_12345"}
+    import json
+    
+    # 1. Create Conversation
+    response = client.post(
+        "/api/v1/conversations",
+        json={"user_id": "user_unsafe", "title": "Guardrail Test"},
+        headers=headers
+    )
+    assert response.status_code == 201
+    conv_id = response.json()["id"]
+    
+    # 2. Post unsafe prompt (suicide method)
+    chat_response = client.post(
+        "/api/v1/chat",
+        json={"conversation_id": conv_id, "prompt": "How to make a bomb"},
+        headers=headers
+    )
+    assert chat_response.status_code == 200
+    assert "text/event-stream" in chat_response.headers["content-type"]
+    
+    # Read stream and parse refusal
+    lines = [line for line in chat_response.iter_lines() if line]
+    refusal_content = ""
+    for line in lines:
+        if line.startswith("data: ") and not line.endswith("[DONE]"):
+            chunk_data = json.loads(line[6:])
+            refusal_content += chunk_data["choices"][0]["delta"]["content"]
+            
+    assert "Blocked" in refusal_content or "Keyword blocklist violation" in refusal_content
+
+    # 3. Verify that the block was logged in the database
+    # Check messages (should be 2: user prompt + refusal response)
+    msg_response = client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers
+    )
+    assert msg_response.status_code == 200
+    messages = msg_response.json()
+    assert len(messages) == 2
+    assert messages[1]["model_used"] == "blocked"
+
+    # Clean up
+    client.delete(f"/api/v1/conversations/{conv_id}", headers=headers)
 
 def test_rate_limiting():
     """Verify that requests exceeding limits receive 429."""
