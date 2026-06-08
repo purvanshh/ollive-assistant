@@ -56,6 +56,29 @@ def calculator(expression: str) -> str:
         return f"Error: {exc}"
 
 
+WEB_SEARCH_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "Search the web for up-to-date information on a query. Use this "
+            "when the user asks for current events, news, or factual details not "
+            "known to the model."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query to look up on the web.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 def execute_tool_call(tool_call: Any) -> dict[str, str]:
     """
     Execute one OpenAI tool call and return a tool message payload.
@@ -65,6 +88,13 @@ def execute_tool_call(tool_call: Any) -> dict[str, str]:
 
     if function_name == "calculator":
         result = calculator(**arguments)
+    elif function_name == "web_search":
+        try:
+            from backend.app.tools.search import web_search
+            search_results = web_search(**arguments)
+            result = json.dumps(search_results)
+        except Exception as e:
+            result = f"Error executing search: {e}"
     else:
         result = f"Error: Tool '{function_name}' not found."
 

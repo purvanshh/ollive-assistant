@@ -18,7 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from frontier_assistant.tools import CALCULATOR_SCHEMA, execute_tool_call
+import json
+from frontier_assistant.tools import CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA, execute_tool_call
 from shared.observability import Observability
 
 load_dotenv()
@@ -69,7 +70,7 @@ class FrontierModel:
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
-        tools = [CALCULATOR_SCHEMA] if use_tools else None
+        tools = [CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA] if use_tools else None
 
         try:
             start_time = time.perf_counter()
@@ -152,26 +153,110 @@ class FrontierModel:
         prompt: str,
         history: Optional[list[dict[str, str]]] = None,
     ) -> Generator[str, None, None]:
-        """Stream chunks from OpenAI chat completions API."""
+        """Stream chunks from OpenAI chat completions API, supporting tool call interception."""
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
+        tool_calls_accumulated = {}
+        has_tool_calls = False
+
         try:
             stream = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
+                tools=[CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA],
+                tool_choice="auto",
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 stream=True
             )
             for chunk in stream:
-                content = chunk.choices[0].delta.content or ""
-                if content:
-                    yield content
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+                if delta.tool_calls:
+                    has_tool_calls = True
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_accumulated:
+                            tool_calls_accumulated[idx] = {
+                                "id": tc.id or "",
+                                "name": tc.function.name or "",
+                                "arguments": ""
+                            }
+                        else:
+                            if tc.id:
+                                tool_calls_accumulated[idx]["id"] = tc.id
+                            if tc.function and tc.function.name:
+                                tool_calls_accumulated[idx]["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tool_calls_accumulated[idx]["arguments"] += tc.function.arguments
+                if delta.content:
+                    yield delta.content
         except Exception as exc:
             yield f"[ERROR: {exc}]"
+            return
+
+        if has_tool_calls:
+            # Construct the assistant tool calls message
+            assistant_message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": []
+            }
+            for idx, tc in sorted(tool_calls_accumulated.items()):
+                assistant_message["tool_calls"].append({
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"]
+                    }
+                })
+            messages.append(assistant_message)
+
+            # Execute tool calls
+            from types import SimpleNamespace
+            for idx, tc in sorted(tool_calls_accumulated.items()):
+                tc_obj = SimpleNamespace(
+                    id=tc["id"],
+                    function=SimpleNamespace(name=tc["name"], arguments=tc["arguments"])
+                )
+                
+                # Emit searching status if it is a web search
+                if tc["name"] == "web_search":
+                    try:
+                        args = json.loads(tc["arguments"])
+                        query = args.get("query", "")
+                    except Exception:
+                        query = ""
+                    yield json.dumps({"status": "searching", "tool": "web_search", "query": query})
+
+                # Execute tool call
+                tool_msg = execute_tool_call(tc_obj)
+                messages.append(tool_msg)
+
+                # Emit completed search status if it is a web search
+                if tc["name"] == "web_search":
+                    yield json.dumps({"status": "completed_search"})
+
+            # Follow up with model completion stream
+            try:
+                follow_up_stream = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    stream=True
+                )
+                for chunk in follow_up_stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        yield delta.content
+            except Exception as exc:
+                yield f"[ERROR follow-up stream: {exc}]"
 
 
 # Compatibility alias so the existing scaffold can import the new implementation.

@@ -191,6 +191,15 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
 
             # Stream tokens
             for chunk in model.generate_stream(payload.prompt, history):
+                # Intercept tool search status events
+                if isinstance(chunk, str) and chunk.startswith('{"status":'):
+                    try:
+                        event_data = json.loads(chunk)
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                        continue
+                    except Exception:
+                        pass
+
                 accumulated_text += chunk
                 chunk_data = {
                     "id": assistant_msg_id,
