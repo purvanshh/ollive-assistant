@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     conversation_id: str = Field(..., description="The ID of the conversation")
     prompt: str = Field(..., min_length=1, description="The user prompt")
     model_override: Optional[str] = Field("auto", description="Force a specific model ('auto', 'oss', or 'frontier')")
+    file_content: Optional[str] = Field(None, description="Optional parsed file text content to inject into context")
 
 def classify_intent(prompt: str) -> tuple[str, str, str]:
     prompt_lower = prompt.lower()
@@ -190,7 +191,11 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
             yield f"data: {json.dumps(init_chunk)}\n\n"
 
             # Stream tokens
-            for chunk in model.generate_stream(payload.prompt, history):
+            inference_prompt = payload.prompt
+            if payload.file_content:
+                inference_prompt = f"[Uploaded File Content]\n{payload.file_content}\n\n[User Message]\n{payload.prompt}"
+
+            for chunk in model.generate_stream(inference_prompt, history):
                 # Intercept tool search status events
                 if isinstance(chunk, str) and chunk.startswith('{"status":'):
                     try:

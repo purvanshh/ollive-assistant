@@ -112,11 +112,12 @@ async def structured_logging_middleware(request: Request, call_next):
         raise e
 
 # Include Routers
-from backend.app.routers import health, conversations, chat, evaluations
+from backend.app.routers import health, conversations, chat, evaluations, files
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(evaluations.router, prefix="/api/v1")
+app.include_router(files.router, prefix="/api/v1")
 
 # Mount Prometheus metrics endpoint
 from prometheus_client import make_asgi_app
