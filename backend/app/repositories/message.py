@@ -5,6 +5,10 @@ from typing import List, Optional
 
 class MessageRepository:
     @staticmethod
+    def get_by_id(db: Session, message_id: str) -> Optional[Message]:
+        return db.query(Message).filter(Message.id == message_id).first()
+
+    @staticmethod
     def create(
         db: Session,
         conversation_id: str,
