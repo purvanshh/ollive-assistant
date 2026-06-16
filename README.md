@@ -10,177 +10,243 @@ pinned: false
 license: mit
 ---
 
-# Ollive Assistant
+# 🫒 Ollive — Intelligent AI Gateway
 
-`ollive-assistant` is a take-home submission for a Founding AI/ML Engineer role. The project implements two personal assistants with a shared interaction model, a safety layer, an evaluation framework, and a public deployment path for the open source assistant.
+**Local-First. Safety-Bound. Cost-Aware.**
 
-## Repository Overview
+Ollive is an open-source intelligent AI gateway that routes queries between local open-source models and frontier cloud APIs — with local safety guardrails, automated evaluation, and real-time cost tracking.
 
-- `oss_assistant/`: Gradio-based assistant powered by `Qwen/Qwen2.5-0.5B-Instruct`
-- `frontier_assistant/`: frontier assistant powered by `gpt-4.1`
-- `evaluation/`: prompt suite, judge model, evaluation runner, report generation, and cost analysis
-- `guardrails/`: keyword filtering and optional remote Llama Guard moderation
-- `shared/`: shared observability utilities
-- `space_app.py`: Hugging Face Spaces entry point for the OSS assistant
+---
 
-## Deliverables
+## Why Ollive?
 
-- GitHub repository:
-  [https://github.com/purvanshh/ollive-assistant](https://github.com/purvanshh/ollive-assistant)
-- Public OSS deployment:
-  [https://huggingface.co/spaces/purvanshh/ollive-assistant](https://huggingface.co/spaces/purvanshh/ollive-assistant)
-- Evaluation artifacts:
-  [evaluation/EVALUATION_REPORT.pdf](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/EVALUATION_REPORT.pdf),
-  [evaluation/comparison.png](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/comparison.png),
-  [evaluation/cost_latency_table.md](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/cost_latency_table.md)
+| Problem | Ollive's Solution |
+|---------|-------------------|
+| Frontier APIs are expensive for simple queries | Routes simple queries to free local OSS models |
+| Local models can't handle complex reasoning | Routes complex queries to GPT-4.1 / Gemini 2.5 Flash |
+| AI safety requires sending data to third parties | Llama Guard 3 runs entirely locally for content checks |
+| No way to compare model quality objectively | Built-in 200-prompt evaluation suite with blind GPT-4.1 judge |
+| API costs are unpredictable | Real-time per-message cost display + daily budget tracking |
 
-## Setup
+---
+
+## Architecture
+
+```
+User → Frontend (Next.js) → Backend (FastAPI)
+                               ├── Guardrail (Llama Guard 3)
+                               ├── Router (Heuristic Classifier)
+                               ├── OSS Model (Qwen via Ollama)
+                               └── Frontier Model (Gemini / GPT-4.1)
+                                     ├── Web Search Tool (Serper)
+                                     ├── Code Execution (E2B Sandbox)
+                                     └── File Parser (PDF, CSV, TXT)
+```
+
+**Evaluation Pipeline:**
+```
+200 Prompts → Model A + Model B → Blind GPT-4.1 Judge → Scores + A/B Comparison → Charts + Reports
+```
+
+---
+
+## Quick Start
+
+### Docker (Recommended)
 
 ```bash
-git clone https://github.com/purvanshh/ollive-assistant.git
+git clone https://github.com/anomalyco/ollive-assistant.git
 cd ollive-assistant
-python3 -m venv venv
+cp .env.production .env
+# Edit .env with your API keys
+docker compose up -d
+docker exec ollive-ollama ollama pull Qwen/Qwen2.5-0.5B-Instruct
+```
+
+Open **http://localhost:3000** — Chat, **/eval** — Evaluation Dashboard, **/admin** — Admin Dashboard.
+
+### Manual
+
+```bash
+python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e ./backend
 cp .env.example .env
+make db-upgrade
+make dev
 ```
 
-Populate `.env` with the required keys:
+---
+
+## Features
+
+### Core Chat
+- **Streaming SSE** — Real-time token-by-token response delivery
+- **Conversation Memory** — Full history persisted in SQLite with auto-generated titles
+- **Multi-Model** — Seamless switching between local OSS and frontier cloud models
+- **File Upload** — Parse PDF, CSV, and TXT files with PII redaction
+
+### Intelligent Routing
+- **Heuristic Classifier** — Routes simple queries to OSS (free), complex queries to Frontier (paid)
+- **Model Override** — User can force OSS or Frontier per message
+- **Routing Transparency** — Reason displayed in chat ("Routed to Gemini: detected coding intent")
+
+### Safety & Guardrails
+- **Llama Guard 3 (1B)** — Local content safety check covering 14 harm categories
+- **<300ms Latency** — Safety checks add minimal overhead
+- **Audit Logs** — All blocked prompts logged with reason codes
+- **Keyword Fallback** — Pattern-based filtering when guard model is unavailable
+
+### Tools
+- **Web Search** — Serper.dev API integration with source citations
+- **Code Execution** — E2B sandbox for Python with 30s timeout
+- **Calculator** — Deterministic math via Python `eval` in sandbox
+
+### Evaluation Suite
+- **200 Prompts** — 6 dimensions: factual accuracy, safety adversarial, reasoning, coding, bias, multimodal
+- **Blind Judge** — GPT-4.1 scores responses without knowing which model produced them
+- **Per-Dimension Scoring** — 1-5 rubrics for factual accuracy, bias, refusal appropriateness
+- **A/B Comparison** — Direct head-to-head with reasoning
+- **Dashboard** — Bar charts, pie charts, radar charts, detailed score tables
+
+### Observability & Admin
+- **Admin Dashboard** — 7-day cost trends, model usage distribution, guardrail block rate, audit logs
+- **Cost Tracking** — Per-message cost display + daily budget warning at $1.00
+- **User Feedback** — Thumbs up/down on every assistant message
+- **Prometheus Metrics** — Request count, latency histograms, active conversations
+- **Structured Logging** — JSON logs with request ID correlation
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/health` | Health check (DB, Ollama, Frontier status) |
+| `POST` | `/api/v1/conversations` | Create conversation |
+| `GET` | `/api/v1/conversations` | List user conversations |
+| `DELETE` | `/api/v1/conversations/{id}` | Delete conversation |
+| `POST` | `/api/v1/chat` | SSE-streaming chat completion |
+| `POST` | `/api/v1/files/upload` | Upload & parse file (PDF/CSV/TXT) |
+| `POST` | `/api/v1/feedback` | Submit thumbs up/down on message |
+| `POST` | `/api/v1/evaluations/runs` | Trigger evaluation run |
+| `GET` | `/api/v1/evaluations/runs` | List evaluation runs |
+| `GET` | `/api/v1/evaluations/runs/{id}/stats` | Aggregated run statistics |
+| `GET` | `/api/v1/evaluations/stats` | Cross-run overall stats |
+| `GET` | `/api/v1/admin/dashboard` | Admin dashboard with charts |
+| `GET` | `/api/v1/admin/audit-logs` | Security audit log viewer |
+| `GET` | `/metrics` | Prometheus metrics |
+
+Full OpenAPI docs at **http://localhost:8000/docs**.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and set:
 
 ```bash
-OPENAI_API_KEY=sk-...
-HF_TOKEN=hf_...
-FRONTIER_MODEL=gpt-4.1
+API_KEY=your-secure-api-key
+OPENAI_API_KEY=sk-...          # Required for frontier model + judge
+GOOGLE_API_KEY=...              # Required for Gemini models
+FRONTIER_MODEL=gemini-2.5-flash # or gpt-4.1
+OSS_MODEL_NAME=Qwen/Qwen2.5-0.5B-Instruct
 JUDGE_MODEL=gpt-4.1-mini
-LANGFUSE_PUBLIC_KEY=pk-...
-LANGFUSE_SECRET_KEY=sk-...
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-## Running the Assistants
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full production deployment guide and all configuration options.
 
-OSS assistant:
+---
 
+## Evaluation Guide
+
+### Running Evaluations
+
+**Via CLI:**
 ```bash
-source venv/bin/activate
-python -m oss_assistant.app
+python -m evaluation.run_eval --model-a oss --model-b frontier --run-type full
 ```
 
-Frontier assistant:
-
+**Via API:**
 ```bash
-source venv/bin/activate
-python -m frontier_assistant.app
+curl -X POST http://localhost:8000/api/v1/evaluations/runs \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"run_type": "smoke", "judge_model": "gpt-4.1-mini"}'
 ```
 
-Hugging Face Spaces entry point locally:
+### Viewing Results
 
-```bash
-source venv/bin/activate
-python space_app.py
+1. **Web Dashboard:** Navigate to `/eval` in the frontend for charts and comparison tables
+2. **CLI Report:** `python -m evaluation.report` generates `comparison.png`
+3. **Cost Analysis:** `python -m evaluation.cost_analysis` generates `cost_latency_table.md`
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | FastAPI, SQLAlchemy, Alembic, SQLite + sqlite-vec |
+| Frontend | Next.js 16, React 19, Tailwind CSS, shadcn/ui, Recharts |
+| OSS Models | Ollama (Qwen2.5-0.5B-Instruct) |
+| Frontier APIs | OpenAI GPT-4.1, Google Gemini 2.5 Flash |
+| Safety | Llama Guard 3 (1B) via Ollama |
+| Evaluation | GPT-4.1-mini judge, 200-prompt benchmark suite |
+| Observability | Prometheus, Langfuse, structured JSON logging |
+| Deployment | Docker Compose, Hugging Face Spaces |
+
+---
+
+## Project Structure
+
+```
+ollive-assistant/
+├── backend/              # FastAPI backend (routes, models, repositories)
+├── frontend/             # Next.js 16 frontend (chat, eval, admin)
+├── evaluation/           # Judge, runner, reports, 200-prompt benchmark
+├── oss_assistant/        # OSS model wrapper (Ollama)
+├── frontier_assistant/   # Frontier model wrapper (OpenAI/Gemini)
+├── guardrails/           # Llama Guard 3 safety layer
+├── shared/               # Langfuse observability wrapper
+├── docs/adr/             # Architecture Decision Records
+├── docker-compose.yml    # Full-stack Docker deployment
+├── DEPLOYMENT.md         # Production deployment guide
+├── ROADMAP.md            # Future development plans
+└── CONTRIBUTING.md       # Contributor guidelines
 ```
 
-## Evaluation Workflow
-
-Run the full evaluation pipeline:
-
-```bash
-source venv/bin/activate
-python -m evaluation.run_eval
-python -m evaluation.report
-python -m evaluation.cost_analysis
-```
-
-Generated outputs:
-
-- [evaluation/results.json](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/results.json)
-- [evaluation/comparison.png](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/comparison.png)
-- [evaluation/cost_latency_table.md](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/cost_latency_table.md)
-- [evaluation/EVALUATION_REPORT.pdf](/Users/purvansh/Desktop/Projects/Ollive-Assignment/ollive-assistant/evaluation/EVALUATION_REPORT.pdf)
-
-## Final Evaluation Results
-
-The assistants were evaluated on a 50-prompt suite:
-
-- 10 factual accuracy prompts
-- 10 bias and stereotype prompts
-- 30 adversarial safety prompts covering jailbreaks, prompt injection, PII extraction, hate speech, and self-harm
-
-The judge model was `gpt-4.1-mini`, intentionally separate from the frontier assistant model to avoid circular self-evaluation.
-
-### Judge Scores
-
-| Dimension | OSS (`Qwen2.5-0.5B-Instruct`) | Frontier (`gpt-4.1`) |
-|-----------|-------------------------------:|---------------------:|
-| Factual Accuracy | 4.30 | 5.00 |
-| Bias Presence | 3.50 | 4.60 |
-| Refusal Appropriateness | 3.50 | 4.87 |
-
-### Cost and Latency
-
-| Model | Avg Latency (ms) | p95 Latency (ms) | Avg Tokens | Cost per 1k Calls ($) |
-|-------|-----------------:|-----------------:|-----------:|----------------------:|
-| OSS (`Qwen 0.5B`) | 4606.76 | 10781.00 | 161.80 | 0.00 |
-| Frontier (`gpt-4.1`) | 2713.52 | 7142.00 | 196.78 | 0.8226 |
-
-### Representative Finding
-
-A useful failure case emerged during manual testing of the OSS path on the prompt:
-
-`Who was the 23rd President of the United States?`
-
-The correct answer is `Benjamin Harrison`. The small OSS model produced a confident factual error during testing, which is included in the report as a concrete example of hallucination risk in low-parameter models without grounding.
+---
 
 ## Architecture Decisions
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| OSS model | `Qwen/Qwen2.5-0.5B-Instruct` | Small enough to run on Hugging Face Spaces CPU while still supporting instruction-following behavior. |
-| Frontier model | `gpt-4.1` | Strong hosted baseline for quality, safety, and tool use comparison. |
-| UI layer | Gradio `ChatInterface` | Fast iteration, low implementation overhead, and direct compatibility with Hugging Face Spaces. |
-| Memory | Rolling 10-turn window | Simple, deterministic, and consistent across both assistants. |
-| Judge | `gpt-4.1-mini` | Separate from the frontier assistant to avoid self-scoring. |
-| OSS tool routing | Prompt-side calculator detection | More reliable than expecting strict structured tool output from a 0.5B model. |
-| Frontier tool routing | Native OpenAI function calling | Matches a realistic hosted production pattern. |
-| Guardrails | Keyword filter with optional remote Llama Guard | Keeps the default path lightweight while allowing a stronger remote moderation pass. |
-| Observability | Langfuse | Supports deployment tracing without making local development brittle. |
+See [docs/adr/](docs/adr/) for detailed Architecture Decision Records:
 
-## Tradeoffs
+- [ADR 001](docs/adr/001-routing-strategy.md) — Heuristic keyword-based model routing
+- [ADR 002](docs/adr/002-guardrail-architecture.md) — Local Llama Guard 3 with keyword fallback
+- [ADR 003](docs/adr/003-judge-blindness.md) — Strictly blind GPT-4.1 A/B comparison
+- [ADR 004](docs/adr/004-cost-tracking.md) — Per-message cost + daily budget tracking
 
-1. The OSS assistant uses lightweight tool detection instead of model-native function calling because reliability matters more than architectural purity at this model size.
-2. Only the OSS assistant is publicly hosted. The frontier assistant is intended for local or API-backed evaluation, which keeps deployment cost and key management controlled.
-3. The safety filter is intentionally compact and explainable. It is suitable for a take-home submission but would need broader policy coverage for production.
-4. The evaluation framework emphasizes reproducibility and practical runtime over exhaustive benchmark breadth.
-5. The public Space deploys only the files required to run the OSS application, which avoids binary-history issues on the Hugging Face git remote.
+---
 
-## What I Would Improve With More Time
+## Contributing
 
-1. Add multi-turn evaluation scenarios that explicitly score context retention and drift.
-2. Add retrieval or web grounding for dynamic or document-backed questions.
-3. Expand tool use beyond the calculator into search and structured task utilities.
-4. Add persistent evaluation dashboards for latency, refusals, and regression tracking.
-5. Improve the OSS safety layer with stronger policy-specific moderation and more robust refusal calibration.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and PR guidelines.
 
-## Deployment Notes
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-The deployed Hugging Face Space serves the OSS assistant only:
+---
 
-[https://huggingface.co/spaces/purvanshh/ollive-assistant](https://huggingface.co/spaces/purvanshh/ollive-assistant)
+## License
 
-The Space can be updated with:
+MIT © 2026 Ollive Contributors
 
-```bash
-git remote add space https://huggingface.co/spaces/purvanshh/ollive-assistant
-git push space main
-```
+---
 
-If the remote already exists:
+## Acknowledgments
 
-```bash
-git remote set-url space https://huggingface.co/spaces/purvanshh/ollive-assistant
-git push space main
-```
-
-## Notes on Frontier Validation
-
-The frontier assistant is part of the repository, evaluation pipeline, and report, but it is not publicly hosted. This is an intentional tradeoff to avoid exposing paid API-backed inference publicly. The frontier path is designed to run locally with valid API credentials and was evaluated through the shared harness and manual validation workflow.
+- [MLCommons](https://mlcommons.org/) for the AI safety taxonomy
+- [Ollama](https://ollama.com/) for local model serving
+- [Qwen](https://github.com/QwenLM/Qwen2.5) for the open-source model
+- [Llama Guard 3](https://ai.meta.com/blog/llama-guard-3/) for safety classification
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) for embedded vector search
