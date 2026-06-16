@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import json
-from frontier_assistant.tools import CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA, execute_tool_call
+from frontier_assistant.tools import CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA, RUN_PYTHON_SCHEMA, execute_tool_call
 from shared.observability import Observability
 
 load_dotenv()
@@ -70,7 +70,7 @@ class FrontierModel:
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
-        tools = [CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA] if use_tools else None
+        tools = [CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA, RUN_PYTHON_SCHEMA] if use_tools else None
 
         try:
             start_time = time.perf_counter()
@@ -166,7 +166,7 @@ class FrontierModel:
             stream = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
-                tools=[CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA],
+                tools=[CALCULATOR_SCHEMA, WEB_SEARCH_SCHEMA, RUN_PYTHON_SCHEMA],
                 tool_choice="auto",
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
@@ -233,14 +233,23 @@ class FrontierModel:
                     except Exception:
                         query = ""
                     yield json.dumps({"status": "searching", "tool": "web_search", "query": query})
+                elif tc["name"] == "run_python":
+                    try:
+                        args = json.loads(tc["arguments"])
+                        code = args.get("code", "")
+                    except Exception:
+                        code = ""
+                    yield json.dumps({"status": "running_code", "tool": "run_python", "code": code})
 
                 # Execute tool call
                 tool_msg = execute_tool_call(tc_obj)
                 messages.append(tool_msg)
 
-                # Emit completed search status if it is a web search
+                # Emit completed status
                 if tc["name"] == "web_search":
                     yield json.dumps({"status": "completed_search"})
+                elif tc["name"] == "run_python":
+                    yield json.dumps({"status": "completed_code"})
 
             # Follow up with model completion stream
             try:

@@ -78,6 +78,28 @@ WEB_SEARCH_SCHEMA = {
     },
 }
 
+RUN_PYTHON_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "run_python",
+        "description": (
+            "Execute python code safely in a sandbox. Use this when the user "
+            "asks to write and execute code, run computations, analyze data, or "
+            "do algorithmic tasks. Returns the standard output and error."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The python code string to run.",
+                }
+            },
+            "required": ["code"],
+        },
+    },
+}
+
 
 def execute_tool_call(tool_call: Any) -> dict[str, str]:
     """
@@ -95,6 +117,13 @@ def execute_tool_call(tool_call: Any) -> dict[str, str]:
             result = json.dumps(search_results)
         except Exception as e:
             result = f"Error executing search: {e}"
+    elif function_name == "run_python":
+        try:
+            from backend.app.tools.code_execution import run_python_code
+            stdout, stderr = run_python_code(**arguments)
+            result = json.dumps({"stdout": stdout, "stderr": stderr})
+        except Exception as e:
+            result = f"Error executing code: {e}"
     else:
         result = f"Error: Tool '{function_name}' not found."
 
