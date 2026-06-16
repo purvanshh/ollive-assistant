@@ -19,12 +19,14 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Ensure backend directory is in the path
+# Ensure backend directory and repo root are in the path
 backend_path = Path(__file__).resolve().parents[1]
-if str(backend_path) not in sys.path:
-    sys.path.insert(0, str(backend_path))
+repo_root = backend_path.parent
+for p in (str(repo_root), str(backend_path)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from app.models import Base
+from backend.app.models import Base
 target_metadata = Base.metadata
 
 load_dotenv()

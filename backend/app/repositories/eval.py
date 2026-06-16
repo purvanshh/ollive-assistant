@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from backend.app.models import EvalRun, EvalResult
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 
 class EvalRepository:
     @staticmethod
@@ -45,6 +45,7 @@ class EvalRepository:
         model_b: str,
         winner: str,
         judge_reasoning: str,
+        details: Optional[Dict[str, Any]] = None,
     ) -> EvalResult:
         eval_result = EvalResult(
             eval_run_id=eval_run_id,
@@ -53,6 +54,7 @@ class EvalRepository:
             model_b=model_b,
             winner=winner,
             judge_reasoning=judge_reasoning,
+            details=details,
         )
         db.add(eval_result)
         db.commit()

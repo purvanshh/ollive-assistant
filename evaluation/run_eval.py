@@ -12,6 +12,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -19,7 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Ensure backend directory is also in path if needed, but REPO_ROOT should suffice
 from backend.app.database import SessionLocal
 from backend.app.repositories.eval import EvalRepository
 from evaluation.judge import JudgeModel
@@ -58,27 +58,25 @@ def load_model(name: str):
         return FrontierModel(model_name=model_name)
 
 
-def run_evaluation() -> None:
+def run_evaluation_params(
+    model_a_name: str = "oss",
+    model_b_name: str = "frontier",
+    judge_model_name: str = "gpt-4.1-mini",
+    run_type: str = "full",
+) -> str:
     """
-    Run evaluation using CLI arguments and save results to DB and results.json.
+    Core evaluation function callable from code (not just CLI).
+    Returns the eval run ID.
     """
-    parser = argparse.ArgumentParser(description="Run Ollive Evaluation Suite.")
-    parser.add_argument("--model-a", type=str, default="oss", help="Model A name/type ('oss' or identifier)")
-    parser.add_argument("--model-b", type=str, default="frontier", help="Model B name/type ('frontier' or identifier)")
-    parser.add_argument("--judge", type=str, default="gpt-4.1-mini", help="Judge model name")
-    parser.add_argument("--run-type", type=str, default="full", choices=["full", "smoke"], help="Evaluation run type ('full' or 'smoke')")
-    args = parser.parse_args()
-
-    print(f"Initializing models... Model A: {args.model_a}, Model B: {args.model_b}")
-    model_a = load_model(args.model_a)
-    model_b = load_model(args.model_b)
-    judge = JudgeModel(model_name=args.judge)
+    model_a = load_model(model_a_name)
+    model_b = load_model(model_b_name)
+    judge = JudgeModel(model_name=judge_model_name)
 
     db = SessionLocal()
     eval_run = EvalRepository.create_run(
         db=db,
-        run_type=args.run_type,
-        judge_model=args.judge,
+        run_type=run_type,
+        judge_model=judge_model_name,
         passed=False,
         report_path=str(RESULTS_PATH)
     )
@@ -87,42 +85,62 @@ def run_evaluation() -> None:
 
     try:
         for category, (prompts, dimension) in PROMPT_CATEGORIES.items():
-            prompts_to_run = prompts[:2] if args.run_type == "smoke" else prompts
+            prompts_to_run = prompts[:2] if run_type == "smoke" else prompts
             for idx, prompt in enumerate(prompts_to_run, start=1):
-                print(f"[{category}] Prompt {idx}/{len(prompts_to_run)}: {prompt[:60]}...")
-
-                # Run Model A (Mapped to "oss" in json schema for compatibility with reporting scripts)
                 start = time.perf_counter()
                 response_a = model_a.generate(prompt, history=[])
                 latency_a = round(time.perf_counter() - start, 3)
                 metrics_a = getattr(model_a, "last_generation_info", {})
                 judgment_a = judge.score(prompt, response_a, dimension)
 
-                # Run Model B (Mapped to "frontier" in json schema for compatibility with reporting scripts)
                 start = time.perf_counter()
                 response_b = model_b.generate(prompt, history=[])
                 latency_b = round(time.perf_counter() - start, 3)
                 metrics_b = getattr(model_b, "last_generation_info", {})
                 judgment_b = judge.score(prompt, response_b, dimension)
 
-                # Blind A/B Comparison
                 comparison = judge.compare(prompt, response_a, response_b)
                 winner = comparison.get("winner", "tie")
                 reasoning = comparison.get("reasoning", "No explanation provided.")
 
-                # Save comparison directly to database
                 prompt_id = f"{category}_{idx}"
+                details = {
+                    "category": category,
+                    "dimension": dimension,
+                    "prompt": prompt,
+                    "model_a": {
+                        "name": model_a_name,
+                        "response": response_a,
+                        "score": judgment_a["score"],
+                        "justification": judgment_a["justification"],
+                        "latency_ms": round(latency_a * 1000, 2),
+                        "token_count": metrics_a.get("token_count", 0),
+                        "input_tokens": metrics_a.get("input_tokens", 0),
+                        "output_tokens": metrics_a.get("output_tokens", 0),
+                    },
+                    "model_b": {
+                        "name": model_b_name,
+                        "response": response_b,
+                        "score": judgment_b["score"],
+                        "justification": judgment_b["justification"],
+                        "latency_ms": round(latency_b * 1000, 2),
+                        "token_count": metrics_b.get("token_count", 0),
+                        "input_tokens": metrics_b.get("input_tokens", 0),
+                        "output_tokens": metrics_b.get("output_tokens", 0),
+                    },
+                }
+
                 EvalRepository.create_result(
                     db=db,
                     eval_run_id=eval_run.id,
                     prompt_id=prompt_id,
-                    model_a=args.model_a,
-                    model_b=args.model_b,
+                    model_a=model_a_name,
+                    model_b=model_b_name,
                     winner=winner,
-                    judge_reasoning=reasoning
+                    judge_reasoning=reasoning,
+                    details=details,
                 )
 
-                # Append results mapped to "oss" and "frontier" for reporting compatibility
                 results.append(
                     {
                         "category": category,
@@ -157,11 +175,9 @@ def run_evaluation() -> None:
                     }
                 )
 
-        # Mark evaluation run as successful (passed = True)
         eval_run.passed = True
         db.commit()
 
-        # Save to results.json
         RESULTS_PATH.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nEvaluation complete. Results saved to {RESULTS_PATH} and database run ID: {eval_run.id}")
 
@@ -171,6 +187,29 @@ def run_evaluation() -> None:
         raise e
     finally:
         db.close()
+
+    return eval_run.id
+
+
+def run_evaluation() -> None:
+    """
+    CLI entry point for running evaluation.
+    """
+    parser = argparse.ArgumentParser(description="Run Ollive Evaluation Suite.")
+    parser.add_argument("--model-a", type=str, default="oss", help="Model A name/type ('oss' or identifier)")
+    parser.add_argument("--model-b", type=str, default="frontier", help="Model B name/type ('frontier' or identifier)")
+    parser.add_argument("--judge", type=str, default="gpt-4.1-mini", help="Judge model name")
+    parser.add_argument("--run-type", type=str, default="full", choices=["full", "smoke"], help="Evaluation run type ('full' or 'smoke')")
+    args = parser.parse_args()
+
+    print(f"Initializing models... Model A: {args.model_a}, Model B: {args.model_b}")
+    run_id = run_evaluation_params(
+        model_a_name=args.model_a,
+        model_b_name=args.model_b,
+        judge_model_name=args.judge,
+        run_type=args.run_type,
+    )
+    print(f"Evaluation run completed. Run ID: {run_id}")
 
 
 if __name__ == "__main__":

@@ -55,6 +55,7 @@ class EvalResult(Base):
     model_b = Column(String(100), nullable=False)
     winner = Column(String(10), nullable=False)  # 'a', 'b', 'tie'
     judge_reasoning = Column(Text, nullable=False)
+    details = Column(JSON, nullable=True)
 
     eval_run = relationship("EvalRun", back_populates="results")
 
