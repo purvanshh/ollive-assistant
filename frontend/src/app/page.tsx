@@ -1,166 +1,65 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { 
-  Plus, MessageSquare, Trash2, Send, Settings, Sparkles, Shield, Database,
-  ArrowRight, ShieldAlert, CheckCircle, HelpCircle, User, Zap, Paperclip, FileText, X
+import {
+  Send, Sparkles, Database, ShieldAlert, CheckCircle, HelpCircle, User, Zap, Paperclip, FileText, X,
+  ThumbsUp, ThumbsDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useApp } from "@/contexts/AppContext";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface Conversation {
-  id: string;
-  user_id: string;
-  title: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export default function ChatPage() {
+  const {
+    apiKey, userId, modelOverride, setModelOverride,
+    health, conversations, activeConvId, setActiveConvId,
+    messages, setMessages, fetchMessages, fetchConversations, startNewChat,
+  } = useApp();
 
-interface Message {
-  id: string;
-  conversation_id: string;
-  role: string;
-  content: string;
-  model_used: string | null;
-  tokens_used: number | null;
-  cost_usd: number | null;
-  routing_reason?: string | null;
-  created_at: string;
-}
-
-interface HealthStatus {
-  status: string;
-  dependencies: {
-    database: string;
-    ollama: string;
-    frontier: string;
-  };
-}
-
-export default function Home() {
-  // Authentication & API Settings
-  const [apiKey, setApiKey] = useState<string>("test_api_key_12345");
-  const [userId, setUserId] = useState<string>("default_user");
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-
-  // Health and Observability
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-
-  // Conversations & History
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoadingMessages, setIsLoadingMessages] = useState<boolean>(false);
-
-  // Message Input & Generation
   const [input, setInput] = useState<string>("");
-  const [modelOverride, setModelOverride] = useState<string>("auto"); // "auto", "oss", "frontier"
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [streamText, setStreamText] = useState<string>("");
-
-  // Active streaming metadata
   const [streamModel, setStreamModel] = useState<string>("");
   const [streamRoutingReason, setStreamRoutingReason] = useState<string>("");
   const [streamCost, setStreamCost] = useState<number>(0.0);
   const [streamStatus, setStreamStatus] = useState<string>("");
   const [streamToolQuery, setStreamToolQuery] = useState<string>("");
-
-  // File uploads
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load configuration from localStorage on mount
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedKey = localStorage.getItem("ollive_api_key");
-      const savedUser = localStorage.getItem("ollive_user_id");
-      const savedModel = localStorage.getItem("ollive_model_override");
-      if (savedKey) setApiKey(savedKey);
-      if (savedUser) setUserId(savedUser);
-      if (savedModel) setModelOverride(savedModel);
-    }
-    checkHealth();
-  }, []);
-
-  // Fetch conversations when userId or apiKey changes
-  useEffect(() => {
-    if (userId && apiKey) {
-      fetchConversations();
-    }
-  }, [userId, apiKey]);
-
-  // Fetch messages when activeConvId changes
-  useEffect(() => {
-    if (activeConvId) {
-      fetchMessages(activeConvId);
-    } else {
-      setMessages([]);
-    }
-  }, [activeConvId]);
-
-  // Scroll to bottom on new messages or stream text update
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streamText]);
 
-  // API Call: Check Health
-  const checkHealth = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/health`);
-      if (res.ok) {
-        const data = await res.json();
-        setHealth(data);
-      } else {
-        setHealth(null);
-      }
-    } catch {
-      setHealth(null);
-    }
-  };
-
-  // File upload handler
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (file.size > 10 * 1024 * 1024) {
       alert("File size exceeds the 10MB limit.");
       return;
     }
-
     setIsUploading(true);
     const formData = new FormData();
     formData.append("file", file);
-
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/files/upload`, {
         method: "POST",
-        headers: {
-          "X-API-Key": apiKey
-        },
+        headers: { "X-API-Key": apiKey },
         body: formData
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
-
       const data = await res.json();
-      setAttachedFile({
-        name: data.filename,
-        content: data.parsed_content
-      });
+      setAttachedFile({ name: data.filename, content: data.parsed_content });
     } catch (err: any) {
       alert(`Failed to parse file: ${err.message}`);
     } finally {
@@ -169,162 +68,54 @@ export default function Home() {
     }
   };
 
-  // Pre-streaming cost estimator helper
   const estimateCost = (text: string) => {
     if (!text.trim()) return null;
-    
     const isFrontier = modelOverride === "frontier" || (
       modelOverride === "auto" && (() => {
         const lower = text.toLowerCase();
-        const codingKeywords = [
-          "python", "javascript", "typescript", "c++", "rust", "java", "html", "css", 
-          "function", "class", "write code", "implement", "coding", "program", "regex", 
-          "debugging", "debug", "compile", "script", "algorithm", "database query", "sql"
-        ];
-        const mathComplexKeywords = [
-          "solve", "equation", "formula", "calculus", "algebra", "integral", "derivative", 
-          "theorem", "matrix", "geometry", "proof", "trigonometry"
-        ];
-        const reasoningKeywords = [
-          "explain step-by-step", "explain step by step", "why does", "analyze", 
-          "compare and contrast", "logical", "critical thinking", "implications", 
-          "pros and cons", "evaluate", "detailed breakdown", "summarize the argument"
-        ];
-        const multimodalKeywords = [
-          "image", "photo", "picture", "screenshot", "diagram", "pdf", "csv"
-        ];
-        return codingKeywords.some(kw => lower.includes(kw)) ||
-               mathComplexKeywords.some(kw => lower.includes(kw)) ||
-               reasoningKeywords.some(kw => lower.includes(kw)) ||
-               multimodalKeywords.some(kw => lower.includes(kw));
+        const codingKeywords = ["python", "javascript", "typescript", "c++", "rust", "java", "html", "css", "function", "class", "write code", "implement", "coding", "program", "regex", "debugging", "debug", "compile", "script", "algorithm", "database query", "sql"];
+        const mathComplexKeywords = ["solve", "equation", "formula", "calculus", "algebra", "integral", "derivative", "theorem", "matrix", "geometry", "proof", "trigonometry"];
+        const reasoningKeywords = ["explain step-by-step", "explain step by step", "why does", "analyze", "compare and contrast", "logical", "critical thinking", "implications", "pros and cons", "evaluate", "detailed breakdown", "summarize the argument"];
+        const multimodalKeywords = ["image", "photo", "picture", "screenshot", "diagram", "pdf", "csv"];
+        return codingKeywords.some(kw => lower.includes(kw)) || mathComplexKeywords.some(kw => lower.includes(kw)) || reasoningKeywords.some(kw => lower.includes(kw)) || multimodalKeywords.some(kw => lower.includes(kw));
       })()
     );
-
     if (isFrontier) {
       const inputTokens = Math.max(1, Math.ceil(text.length / 4));
-      const cost = (inputTokens * 5.0) / 1_000_000;
-      return { cost, model: "Frontier (GPT-4)" };
+      return { cost: (inputTokens * 5.0) / 1_000_000, model: "Frontier (GPT-4)" };
     }
     return null;
   };
 
-  // API Call: Fetch Conversations
-  const fetchConversations = async () => {
+  const submitFeedback = async (messageId: string, rating: number) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/conversations?user_id=${userId}&limit=50`, {
-        headers: { "X-API-Key": apiKey }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setConversations(data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch conversations", err);
-    }
-  };
-
-  // API Call: Fetch Messages for active conversation
-  const fetchMessages = async (convId: string) => {
-    setIsLoadingMessages(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${convId}/messages`, {
-        headers: { "X-API-Key": apiKey }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch messages", err);
-    } finally {
-      setIsLoadingMessages(false);
-    }
-  };
-
-  // API Call: Create new conversation
-  const startNewChat = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/conversations`, {
+      await fetch(`${API_BASE_URL}/api/v1/feedback`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          title: "New Conversation"
-        })
+        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+        body: JSON.stringify({ message_id: messageId, rating })
       });
-      if (res.ok) {
-        const data = await res.json();
-        setConversations(prev => [data, ...prev]);
-        setActiveConvId(data.id);
-      }
     } catch (err) {
-      console.error("Failed to start new chat", err);
+      console.error("Failed to submit feedback", err);
     }
   };
 
-  // API Call: Delete conversation
-  const deleteConversation = async (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${convId}`, {
-        method: "DELETE",
-        headers: { "X-API-Key": apiKey }
-      });
-      if (res.ok) {
-        setConversations(prev => prev.filter(c => c.id !== convId));
-        if (activeConvId === convId) {
-          setActiveConvId(null);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to delete conversation", err);
-    }
-  };
-
-  // Save Settings
-  const saveSettings = (key: string, user: string) => {
-    setApiKey(key);
-    setUserId(user);
-    localStorage.setItem("ollive_api_key", key);
-    localStorage.setItem("ollive_user_id", user);
-    setShowSettings(false);
-  };
-
-  // Save Model Preference
-  const handleModelChange = (val: string) => {
-    setModelOverride(val);
-    localStorage.setItem("ollive_model_override", val);
-  };
-
-  // SSE: Stream response from /chat completions
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isGenerating) return;
 
     let currentConvId = activeConvId;
-    
-    // Create new conversation automatically if none is active
     if (!currentConvId) {
       try {
         const res = await fetch(`${API_BASE_URL}/api/v1/conversations`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey
-          },
-          body: JSON.stringify({
-            user_id: userId,
-            title: "New Conversation"
-          })
+          headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+          body: JSON.stringify({ user_id: userId, title: "New Conversation" })
         });
         if (res.ok) {
           const data = await res.json();
-          setConversations(prev => [data, ...prev]);
           currentConvId = data.id;
           setActiveConvId(data.id);
+          fetchConversations();
         } else {
           alert("Failed to initialize conversation session.");
           return;
@@ -347,28 +138,24 @@ export default function Home() {
 
     const fileContentToSend = attachedFile ? attachedFile.content : null;
     const fileNameToSend = attachedFile ? attachedFile.name : null;
-    setAttachedFile(null); // Clear file attachment state immediately
+    setAttachedFile(null);
 
-    // Append User Message temporarily to UI
-    const tempUserMsg: Message = {
+    const tempUserMsg = {
       id: `temp-u-${Date.now()}`,
       conversation_id: currentConvId!,
-      role: "user",
+      role: "user" as const,
       content: fileNameToSend ? `[Attached File: ${fileNameToSend}]\n\n${userPrompt}` : userPrompt,
       model_used: null,
       tokens_used: null,
       cost_usd: null,
       created_at: new Date().toISOString()
     };
-    setMessages(prev => [...prev, tempUserMsg]);
+    setMessages((prev: any) => [...prev, tempUserMsg]);
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey
-        },
+        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
         body: JSON.stringify({
           conversation_id: currentConvId,
           prompt: userPrompt,
@@ -377,39 +164,28 @@ export default function Home() {
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Server returned HTTP ${response.status}`);
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      if (!reader) {
-        throw new Error("ReadableStream not supported by response body.");
-      }
+      if (!reader) throw new Error("ReadableStream not supported.");
 
       let accumulatedContent = "";
-      let modelUsed = "";
-      let costVal = 0.0;
       let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        // Save the last partial line back to buffer
         buffer = lines.pop() || "";
 
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          
           if (trimmed.startsWith("data: ")) {
             const dataStr = trimmed.slice(6).trim();
-            if (dataStr === "[DONE]") {
-              break;
-            }
+            if (dataStr === "[DONE]") break;
             try {
               const parsed = JSON.parse(dataStr);
               if (parsed.status === "searching") {
@@ -426,35 +202,31 @@ export default function Home() {
                 if (parsed.model) setStreamModel(parsed.model);
                 if (parsed.routing_reason) setStreamRoutingReason(parsed.routing_reason);
                 if (parsed.cost !== undefined) setStreamCost(parsed.cost);
-                
                 accumulatedContent += content;
                 setStreamText(accumulatedContent);
               }
             } catch (err) {
-              console.error("Failed to parse chunk JSON:", err, "line:", trimmed);
+              console.error("Failed to parse chunk JSON:", err);
             }
           }
         }
       }
 
-      // Reload all messages to ensure we get sync IDs and correct DB timestamps
       await fetchMessages(currentConvId!);
-      await fetchConversations(); // Update conversation titles
+      await fetchConversations();
 
     } catch (err: any) {
-      console.error("Streaming error", err);
-      // Append error message to UI
-      const tempErrorMsg: Message = {
+      const tempErrorMsg = {
         id: `temp-err-${Date.now()}`,
         conversation_id: currentConvId!,
-        role: "assistant",
+        role: "assistant" as const,
         content: `Error generating response: ${err?.message || err}`,
         model_used: "error",
         tokens_used: 0,
         cost_usd: 0.0,
         created_at: new Date().toISOString()
       };
-      setMessages(prev => [...prev, tempErrorMsg]);
+      setMessages((prev: any) => [...prev, tempErrorMsg]);
     } finally {
       setIsGenerating(false);
       setStreamText("");
@@ -462,387 +234,246 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-1 overflow-hidden h-screen bg-zinc-950 text-zinc-50 font-sans">
-      
-      {/* Sidebar Panel */}
-      <aside className="w-80 flex flex-col border-r border-zinc-800 bg-zinc-900/40 backdrop-blur-md">
-        
-        {/* Brand Header */}
-        <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="bg-lime-500 text-black p-1.5 rounded-lg">
-              <Sparkles className="h-5 w-5" />
+    <main className="flex-1 flex flex-col bg-zinc-950">
+      <header className="h-16 border-b border-zinc-800 px-6 flex items-center justify-between bg-zinc-900/10 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-sm">
+            {activeConvId
+              ? conversations.find(c => c.id === activeConvId)?.title || "Chat"
+              : "New Conversation"}
+          </span>
+          {health && (
+            <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
+              <span>· DB: {health.dependencies.database}</span>
+              <span>· Local: {health.dependencies.ollama}</span>
+              <span>· Frontier: {health.dependencies.frontier}</span>
             </div>
-            <div>
-              <h1 className="font-bold tracking-tight text-md">Ollive AI Gateway</h1>
-              <p className="text-[10px] text-zinc-500 font-mono">v1.0 • Local First</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
+            <Zap className="h-3.5 w-3.5 text-lime-500" />
+            <Select value={modelOverride} onValueChange={(val) => setModelOverride(val || "auto")}>
+              <SelectTrigger className="border-0 bg-transparent h-5 text-xs text-zinc-200 focus:ring-0 p-0 font-medium">
+                <SelectValue placeholder="Model Preference" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-200">
+                <SelectItem value="auto">Auto (Router)</SelectItem>
+                <SelectItem value="oss">Force OSS</SelectItem>
+                <SelectItem value="frontier">Force Frontier</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </header>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
+        {messages.map((msg: any) => (
+          <div key={msg.id}
+            className={`flex items-start gap-3.5 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
+          >
+            <div className={`p-2 rounded-xl shrink-0 ${
+              msg.role === "user"
+                ? "bg-zinc-800 text-zinc-100"
+                : msg.model_used === "blocked"
+                  ? "bg-red-950/40 text-red-500 border border-red-900/50"
+                  : "bg-lime-950/20 text-lime-400 border border-lime-900/30"
+            }`}>
+              {msg.role === "user" ? <User className="h-4 w-4" /> : <Database className="h-4 w-4" />}
+            </div>
+            <div className="space-y-1.5 max-w-[75%]">
+              <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
+                msg.role === "user"
+                  ? "bg-zinc-900 text-zinc-100 rounded-tr-none border border-zinc-800/80 shadow-md shadow-black/10"
+                  : msg.model_used === "blocked"
+                    ? "bg-red-950/20 text-red-200 border border-red-900/30 rounded-tl-none"
+                    : "bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5"
+              }`}>
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              </div>
+              {msg.role === "assistant" && (
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
+                  <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
+                    {msg.model_used || "Local OSS"}
+                  </span>
+                  <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 flex items-center gap-1 text-zinc-300">
+                    {msg.cost_usd && msg.cost_usd > 0 ? `$${msg.cost_usd.toFixed(6)}` : "Free (local)"}
+                  </span>
+                  {msg.tokens_used ? <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">{msg.tokens_used} tkn</span> : null}
+                  {msg.routing_reason && (
+                    <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20">
+                      Reason: {msg.routing_reason}
+                    </span>
+                  )}
+                  {msg.id && !msg.id.startsWith("temp-") && (
+                    <div className="flex items-center gap-0.5 ml-1">
+                      <button
+                        onClick={() => submitFeedback(msg.id, 1)}
+                        className="p-0.5 rounded hover:bg-lime-500/20 text-zinc-500 hover:text-lime-400 transition-colors"
+                        title="Helpful"
+                      >
+                        <ThumbsUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={() => submitFeedback(msg.id, -1)}
+                        className="p-0.5 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-colors"
+                        title="Not helpful"
+                      >
+                        <ThumbsDown className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="text-zinc-400 hover:text-zinc-50 hover:bg-zinc-800"
-            onClick={() => setShowSettings(!showSettings)}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </div>
+        ))}
 
-        {/* Action Button: New Chat */}
-        <div className="p-3">
-          <Button 
-            onClick={startNewChat} 
-            className="w-full bg-lime-500 hover:bg-lime-400 text-black font-semibold flex items-center gap-2 rounded-xl transition-all shadow-md shadow-lime-950/20"
-          >
-            <Plus className="h-4 w-4" />
-            New Chat
-          </Button>
-        </div>
-
-        {/* Settings Sub-Panel (Overlay effect in sidebar) */}
-        {showSettings && (
-          <div className="p-4 bg-zinc-800/80 border-b border-zinc-700 m-3 rounded-xl space-y-3">
-            <h3 className="font-semibold text-xs text-zinc-400 tracking-wider uppercase">Connection Settings</h3>
-            <div className="space-y-2">
-              <div>
-                <label className="text-[10px] text-zinc-400 font-mono">API Key</label>
-                <Input 
-                  value={apiKey} 
-                  type="password"
-                  onChange={(e) => setApiKey(e.target.value)} 
-                  className="bg-zinc-900 border-zinc-700 text-xs text-zinc-200" 
-                />
+        {isGenerating && (streamText || streamStatus === "searching" || streamStatus === "running_code") && (
+          <div className="flex items-start gap-3.5 flex-row animate-fade-in">
+            <div className="p-2 rounded-xl shrink-0 bg-lime-950/20 text-lime-400 border border-lime-900/30">
+              <Database className="h-4 w-4" />
+            </div>
+            <div className="space-y-1.5 max-w-[75%]">
+              {streamStatus === "searching" && (
+                <div className="p-4 rounded-2xl text-sm bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-lime-500"></div>
+                  <span>Searching web for &quot;{streamToolQuery}&quot;...</span>
+                </div>
+              )}
+              {streamStatus === "running_code" && (
+                <div className="p-4 rounded-2xl text-sm bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
+                  <span>Executing python code...</span>
+                </div>
+              )}
+              {streamText && (
+                <div className="p-4 rounded-2xl text-sm bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none">
+                  <p className="whitespace-pre-wrap">{streamText}</p>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
+                <span className="animate-pulse bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-900/40">
+                  {streamStatus === "searching" || streamStatus === "running_code" ? "thinking..." : "streaming..."}
+                </span>
+                {streamModel && (
+                  <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">{streamModel}</span>
+                )}
+                {streamModel && (
+                  <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
+                    {streamCost > 0 ? `$${streamCost.toFixed(6)}` : "Free (local)"}
+                  </span>
+                )}
+                {streamRoutingReason && (
+                  <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20 animate-fade-in">
+                    Reason: {streamRoutingReason}
+                  </span>
+                )}
               </div>
-              <div>
-                <label className="text-[10px] text-zinc-400 font-mono">User ID</label>
-                <Input 
-                  value={userId} 
-                  onChange={(e) => setUserId(e.target.value)} 
-                  className="bg-zinc-900 border-zinc-700 text-xs text-zinc-200" 
-                />
-              </div>
-              <Button 
-                size="sm" 
-                onClick={() => saveSettings(apiKey, userId)}
-                className="w-full bg-zinc-700 hover:bg-zinc-600 text-zinc-50 text-xs"
-              >
-                Save Configuration
-              </Button>
             </div>
           </div>
         )}
 
-        {/* Conversation List Scrollable Area */}
-        <ScrollArea className="flex-1 px-2 py-1">
-          <div className="space-y-1">
-            {conversations.map((conv) => (
-              <div
-                key={conv.id}
-                onClick={() => setActiveConvId(conv.id)}
-                className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer text-sm font-medium transition-all ${
-                  activeConvId === conv.id
-                    ? "bg-zinc-800 text-zinc-50"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40"
-                }`}
+        {messages.length === 0 && !isGenerating && (
+          <div className="h-full flex flex-col items-center justify-center py-24 text-zinc-600 text-center max-w-md mx-auto space-y-4">
+            <div className="p-4 bg-zinc-900 rounded-3xl border border-zinc-800 shadow-xl">
+              <Sparkles className="h-12 w-12 text-lime-500 mx-auto" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-bold text-zinc-300">Welcome to Ollive AI Gateway</h3>
+              <p className="text-xs text-zinc-500">
+                Ask a question. Simple questions will route locally, while complex reasoning queries route to frontier APIs. Local Llama Guard 3 stands watch on all chats.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 w-full pt-4">
+              <button
+                onClick={() => setInput("What is 2 + 2?")}
+                className="p-2.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-xl text-left text-xs border border-zinc-800/80 transition-all"
               >
-                <div className="flex items-center gap-2.5 overflow-hidden">
-                  <MessageSquare className="h-4 w-4 shrink-0 opacity-70" />
-                  <span className="truncate">{conv.title || "Untitled Chat"}</span>
-                </div>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={(e) => deleteConversation(conv.id, e)}
-                  className="h-7 w-7 text-zinc-500 hover:text-red-400 hover:bg-zinc-700/50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-
-            {conversations.length === 0 && (
-              <div className="text-center py-8 text-zinc-500 space-y-2">
-                <HelpCircle className="h-8 w-8 mx-auto opacity-20" />
-                <p className="text-xs">No active chats. Start one above!</p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-
-        {/* Health status footer */}
-        <div className="p-3 border-t border-zinc-800 bg-zinc-950/20 text-xs flex items-center justify-between">
-          <span className="text-zinc-500">Service Status:</span>
-          {health ? (
-            <div className="flex items-center gap-1.5 text-lime-500">
-              <CheckCircle className="h-3.5 w-3.5" />
-              <span>{health.status.toUpperCase()}</span>
+                <span className="font-semibold block text-zinc-300">Simple Math</span>
+                &quot;What is 2 + 2?&quot;
+              </button>
+              <button
+                onClick={() => setInput("Write a Python function to compute the first 10 Fibonacci numbers")}
+                className="p-2.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-xl text-left text-xs border border-zinc-800/80 transition-all"
+              >
+                <span className="font-semibold block text-zinc-300">Code Generation</span>
+                &quot;Write a Fibonacci func...&quot;
+              </button>
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-amber-500">
-              <ShieldAlert className="h-3.5 w-3.5" />
-              <span>OFFLINE</span>
+          </div>
+        )}
+      </div>
+
+      <div className="p-6 border-t border-zinc-800 bg-zinc-900/10 backdrop-blur-md">
+        <div className="flex flex-col gap-2 mb-3">
+          {isUploading && (
+            <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400 bg-zinc-900 px-3 py-2 rounded-xl animate-pulse border border-zinc-800">
+              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-zinc-400"></div>
+              <span>Uploading and parsing file...</span>
             </div>
           )}
-        </div>
-      </aside>
-
-      {/* Main Chat Interface Area */}
-      <main className="flex-1 flex flex-col bg-zinc-950">
-        
-        {/* Header Bar */}
-        <header className="h-16 border-b border-zinc-800 px-6 flex items-center justify-between bg-zinc-900/10 backdrop-blur-md">
-          <div className="flex items-center gap-3">
-            <span className="font-semibold text-sm">
-              {activeConvId
-                ? conversations.find(c => c.id === activeConvId)?.title || "Chat"
-                : "New Conversation"}
-            </span>
-            {health && (
-              <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
-                <span>• DB: {health.dependencies.database}</span>
-                <span>• Local: {health.dependencies.ollama}</span>
-                <span>• Frontier: {health.dependencies.frontier}</span>
+          {attachedFile && (
+            <div className="flex items-center justify-between text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
+              <div className="flex items-center gap-2">
+                <FileText className="h-3.5 w-3.5 text-lime-400" />
+                <span>Attached: <strong>{attachedFile.name}</strong> (~{Math.round(attachedFile.content.length / 1024)} KB)</span>
               </div>
-            )}
-          </div>
-          
-          {/* Controls: Model Overrider */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
-              <Zap className="h-3.5 w-3.5 text-lime-500" />
-              <Select value={modelOverride} onValueChange={(val) => handleModelChange(val || "auto")}>
-                <SelectTrigger className="border-0 bg-transparent h-5 text-xs text-zinc-200 focus:ring-0 p-0 font-medium">
-                  <SelectValue placeholder="Model Preference" />
-                </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-200">
-                  <SelectItem value="auto">Auto (Router)</SelectItem>
-                  <SelectItem value="oss">Force OSS</SelectItem>
-                  <SelectItem value="frontier">Force Frontier</SelectItem>
-                </SelectContent>
-              </Select>
+              <button type="button" onClick={() => setAttachedFile(null)} className="text-lime-500 hover:text-red-400 transition-colors">
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
-          </div>
-        </header>
-
-        {/* Chat History Messages Scroll Area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
-          
-          {/* Messages loop */}
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex items-start gap-3.5 ${
-                msg.role === "user" ? "flex-row-reverse" : "flex-row"
-              }`}
-            >
-              {/* Avatar Icon */}
-              <div className={`p-2 rounded-xl shrink-0 ${
-                msg.role === "user" 
-                  ? "bg-zinc-800 text-zinc-100" 
-                  : msg.model_used === "blocked"
-                    ? "bg-red-950/40 text-red-500 border border-red-900/50"
-                    : "bg-lime-950/20 text-lime-400 border border-lime-900/30"
-              }`}>
-                {msg.role === "user" ? <User className="h-4 w-4" /> : <Database className="h-4 w-4" />}
-              </div>
-
-              {/* Message Bubble Container */}
-              <div className="space-y-1.5 max-w-[75%]">
-                <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
-                  msg.role === "user"
-                    ? "bg-zinc-900 text-zinc-100 rounded-tr-none border border-zinc-800/80 shadow-md shadow-black/10"
-                    : msg.model_used === "blocked"
-                      ? "bg-red-950/20 text-red-200 border border-red-900/30 rounded-tl-none"
-                      : "bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5"
-                }`}>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                </div>
-                
-                {/* Message Metadata Badges */}
-                {msg.role === "assistant" && (
-                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
-                      {msg.model_used || "Local OSS"}
-                    </span>
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 flex items-center gap-1 text-zinc-300">
-                      {msg.cost_usd && msg.cost_usd > 0 
-                        ? `$${msg.cost_usd.toFixed(6)}` 
-                        : "Free (local)"}
-                    </span>
-                    {msg.tokens_used ? <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">{msg.tokens_used} tkn</span> : null}
-                    {msg.routing_reason && (
-                      <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20">
-                        Reason: {msg.routing_reason}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {/* Active SSE Streaming Placeholder Message */}
-          {isGenerating && (streamText || streamStatus === "searching" || streamStatus === "running_code") && (
-            <div className="flex items-start gap-3.5 flex-row animate-fade-in">
-              <div className="p-2 rounded-xl shrink-0 bg-lime-950/20 text-lime-400 border border-lime-900/30">
-                <Database className="h-4 w-4" />
-              </div>
-              <div className="space-y-1.5 max-w-[75%]">
-                {streamStatus === "searching" && (
-                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5 flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-lime-500"></div>
-                    <span>Searching web for "{streamToolQuery}"...</span>
-                  </div>
-                )}
-                {streamStatus === "running_code" && (
-                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5 flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
-                    <span>Executing python code...</span>
-                  </div>
-                )}
-                {streamText && (
-                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5">
-                    <p className="whitespace-pre-wrap">{streamText}</p>
-                  </div>
-                )}
-                <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
-                  <span className="animate-pulse bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-900/40">
-                    {streamStatus === "searching" || streamStatus === "running_code" ? "thinking..." : "streaming..."}
+          )}
+          {(() => {
+            const promptText = attachedFile ? attachedFile.content + "\n" + input : input;
+            const estimation = estimateCost(promptText);
+            if (estimation) {
+              return (
+                <div className="flex items-center gap-2 text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
+                  <Sparkles className="h-3.5 w-3.5 animate-pulse text-lime-400" />
+                  <span>
+                    Detected complex query. Routing to <strong>{estimation.model}</strong>. Est. Input Cost: <strong>${estimation.cost.toFixed(6)}</strong>
                   </span>
-                  {streamModel && (
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
-                      {streamModel}
-                    </span>
-                  )}
-                  {streamModel && (
-                    <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
-                      {streamCost > 0 ? `$${streamCost.toFixed(6)}` : "Free (local)"}
-                    </span>
-                  )}
-                  {streamRoutingReason && (
-                    <span className="bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-500/20 animate-fade-in">
-                      Reason: {streamRoutingReason}
-                    </span>
-                  )}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* Placeholder: Empty Chat */}
-          {messages.length === 0 && !isGenerating && (
-            <div className="h-full flex flex-col items-center justify-center py-24 text-zinc-600 text-center max-w-md mx-auto space-y-4">
-              <div className="p-4 bg-zinc-900 rounded-3xl border border-zinc-800 shadow-xl">
-                <Sparkles className="h-12 w-12 text-lime-500 mx-auto" />
-              </div>
-              <div className="space-y-1">
-                <h3 className="font-bold text-zinc-300">Welcome to Ollive AI Gateway</h3>
-                <p className="text-xs text-zinc-500">
-                  Ask a question. Simple questions will route locally, while complex reasoning queries route to frontier APIs. Local Llama Guard 3 stands watch on all chats.
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-2 w-full pt-4">
-                <button 
-                  onClick={() => setInput("What is 2 + 2?")}
-                  className="p-2.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-xl text-left text-xs border border-zinc-800/80 transition-all"
-                >
-                  <span className="font-semibold block text-zinc-300">Simple Math</span>
-                  "What is 2 + 2?"
-                </button>
-                <button 
-                  onClick={() => setInput("Write a Python function to compute the first 10 Fibonacci numbers")}
-                  className="p-2.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-xl text-left text-xs border border-zinc-800/80 transition-all"
-                >
-                  <span className="font-semibold block text-zinc-300">Code Generation</span>
-                  "Write a Fibonacci func..."
-                </button>
-              </div>
-            </div>
-          )}
+              );
+            }
+            return null;
+          })()}
         </div>
-
-        {/* Message Input Form (Sticky bottom) */}
-        <div className="p-6 border-t border-zinc-800 bg-zinc-900/10 backdrop-blur-md">
-          {/* File Attachment / Upload status / Cost Estimation Banner */}
-          <div className="flex flex-col gap-2 mb-3">
-            {isUploading && (
-              <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400 bg-zinc-900 px-3 py-2 rounded-xl animate-pulse border border-zinc-800">
-                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-zinc-400"></div>
-                <span>Uploading and parsing file...</span>
-              </div>
-            )}
-            {attachedFile && (
-              <div className="flex items-center justify-between text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-3.5 w-3.5 text-lime-400" />
-                  <span>Attached: <strong>{attachedFile.name}</strong> (~{Math.round(attachedFile.content.length / 1024)} KB)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAttachedFile(null)}
-                  className="text-lime-500 hover:text-red-400 transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-            {(() => {
-              const promptText = attachedFile ? attachedFile.content + "\n" + input : input;
-              const estimation = estimateCost(promptText);
-              if (estimation) {
-                return (
-                  <div className="flex items-center gap-2 text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
-                    <Sparkles className="h-3.5 w-3.5 animate-pulse text-lime-400" />
-                    <span>
-                      Detected complex query. Routing to <strong>{estimation.model}</strong>. Est. Input Cost: <strong>${estimation.cost.toFixed(6)}</strong>
-                    </span>
-                  </div>
-                );
-              }
-              return null;
-            })()}
-          </div>
-          <form onSubmit={handleSendMessage} className="relative flex items-center">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept=".pdf,.csv,.txt"
-              className="hidden"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={isGenerating || isUploading}
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute left-2 top-2 h-9 w-9 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl flex items-center justify-center transition-all"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={isGenerating ? "Streaming response..." : "Type your message here..."}
-              disabled={isGenerating}
-              className="w-full bg-zinc-900 border-zinc-800 rounded-2xl py-6 pr-14 pl-12 text-sm focus-visible:ring-lime-500 text-zinc-100 placeholder-zinc-500 shadow-inner"
-            />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={isGenerating || !input.trim()}
-              className="absolute right-2 top-2 bg-lime-500 hover:bg-lime-400 text-black rounded-xl h-9 w-9 flex items-center justify-center transition-all shadow-md shadow-lime-950/20"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </form>
-          <div className="mt-2 text-center">
-            <span className="text-[10px] text-zinc-600 font-mono">
-              Layered local security actively checks all prompts. Model cost and metrics are recorded in real-time.
-            </span>
-          </div>
+        <form onSubmit={handleSendMessage} className="relative flex items-center">
+          <input
+            type="file" ref={fileInputRef} onChange={handleFileUpload}
+            accept=".pdf,.csv,.txt" className="hidden"
+          />
+          <Button
+            type="button" variant="ghost" size="icon"
+            disabled={isGenerating || isUploading}
+            onClick={() => fileInputRef.current?.click()}
+            className="absolute left-2 top-2 h-9 w-9 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl flex items-center justify-center transition-all"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={isGenerating ? "Streaming response..." : "Type your message here..."}
+            disabled={isGenerating}
+            className="w-full bg-zinc-900 border-zinc-800 rounded-2xl py-6 pr-14 pl-12 text-sm focus-visible:ring-lime-500 text-zinc-100 placeholder-zinc-500 shadow-inner"
+          />
+          <Button
+            type="submit" size="icon"
+            disabled={isGenerating || !input.trim()}
+            className="absolute right-2 top-2 bg-lime-500 hover:bg-lime-400 text-black rounded-xl h-9 w-9 flex items-center justify-center transition-all shadow-md shadow-lime-950/20"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+        <div className="mt-2 text-center">
+          <span className="text-[10px] text-zinc-600 font-mono">
+            Layered local security actively checks all prompts. Model cost and metrics are recorded in real-time.
+          </span>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
