@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Plus, MessageSquare, Trash2, Send, Settings, Sparkles, Shield, Database,
-  ArrowRight, ShieldAlert, CheckCircle, HelpCircle, User, Zap
+  ArrowRight, ShieldAlert, CheckCircle, HelpCircle, User, Zap, Paperclip, FileText, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,6 +70,11 @@ export default function Home() {
   const [streamStatus, setStreamStatus] = useState<string>("");
   const [streamToolQuery, setStreamToolQuery] = useState<string>("");
 
+  // File uploads
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load configuration from localStorage on mount
@@ -120,6 +125,47 @@ export default function Home() {
       }
     } catch {
       setHealth(null);
+    }
+  };
+
+  // File upload handler
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File size exceeds the 10MB limit.");
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/files/upload`, {
+        method: "POST",
+        headers: {
+          "X-API-Key": apiKey
+        },
+        body: formData
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setAttachedFile({
+        name: data.filename,
+        content: data.parsed_content
+      });
+    } catch (err: any) {
+      alert(`Failed to parse file: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -299,12 +345,16 @@ export default function Home() {
     setStreamStatus("");
     setStreamToolQuery("");
 
+    const fileContentToSend = attachedFile ? attachedFile.content : null;
+    const fileNameToSend = attachedFile ? attachedFile.name : null;
+    setAttachedFile(null); // Clear file attachment state immediately
+
     // Append User Message temporarily to UI
     const tempUserMsg: Message = {
       id: `temp-u-${Date.now()}`,
       conversation_id: currentConvId!,
       role: "user",
-      content: userPrompt,
+      content: fileNameToSend ? `[Attached File: ${fileNameToSend}]\n\n${userPrompt}` : userPrompt,
       model_used: null,
       tokens_used: null,
       cost_usd: null,
@@ -322,7 +372,8 @@ export default function Home() {
         body: JSON.stringify({
           conversation_id: currentConvId,
           prompt: userPrompt,
-          model_override: modelOverride
+          model_override: modelOverride,
+          file_content: fileContentToSend
         })
       });
 
@@ -364,8 +415,11 @@ export default function Home() {
               if (parsed.status === "searching") {
                 setStreamStatus("searching");
                 setStreamToolQuery(parsed.query || "");
+              } else if (parsed.status === "running_code") {
+                setStreamStatus("running_code");
+                setStreamToolQuery(parsed.code || "");
               } else {
-                if (parsed.status === "completed_search") {
+                if (parsed.status === "completed_search" || parsed.status === "completed_code") {
                   setStreamStatus("");
                 }
                 const content = parsed.choices?.[0]?.delta?.content || "";
@@ -628,7 +682,7 @@ export default function Home() {
           ))}
 
           {/* Active SSE Streaming Placeholder Message */}
-          {isGenerating && (streamText || streamStatus === "searching") && (
+          {isGenerating && (streamText || streamStatus === "searching" || streamStatus === "running_code") && (
             <div className="flex items-start gap-3.5 flex-row animate-fade-in">
               <div className="p-2 rounded-xl shrink-0 bg-lime-950/20 text-lime-400 border border-lime-900/30">
                 <Database className="h-4 w-4" />
@@ -640,6 +694,12 @@ export default function Home() {
                     <span>Searching web for "{streamToolQuery}"...</span>
                   </div>
                 )}
+                {streamStatus === "running_code" && (
+                  <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-400 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5 flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
+                    <span>Executing python code...</span>
+                  </div>
+                )}
                 {streamText && (
                   <div className="p-4 rounded-2xl text-sm leading-relaxed bg-zinc-900/50 text-zinc-200 border border-zinc-850 rounded-tl-none shadow-md shadow-black/5">
                     <p className="whitespace-pre-wrap">{streamText}</p>
@@ -647,7 +707,7 @@ export default function Home() {
                 )}
                 <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 font-mono px-1">
                   <span className="animate-pulse bg-lime-500/10 text-lime-400 px-1.5 py-0.5 rounded border border-lime-900/40">
-                    {streamStatus === "searching" ? "thinking..." : "streaming..."}
+                    {streamStatus === "searching" || streamStatus === "running_code" ? "thinking..." : "streaming..."}
                   </span>
                   {streamModel && (
                     <span className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300">
@@ -703,27 +763,69 @@ export default function Home() {
 
         {/* Message Input Form (Sticky bottom) */}
         <div className="p-6 border-t border-zinc-800 bg-zinc-900/10 backdrop-blur-md">
-          {(() => {
-            const estimation = estimateCost(input);
-            if (estimation) {
-              return (
-                <div className="mb-3 flex items-center gap-2 text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
-                  <Sparkles className="h-3.5 w-3.5 animate-pulse text-lime-400" />
-                  <span>
-                    Detected complex query. Routing to <strong>{estimation.model}</strong>. Est. Input Cost: <strong>${estimation.cost.toFixed(6)}</strong>
-                  </span>
+          {/* File Attachment / Upload status / Cost Estimation Banner */}
+          <div className="flex flex-col gap-2 mb-3">
+            {isUploading && (
+              <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400 bg-zinc-900 px-3 py-2 rounded-xl animate-pulse border border-zinc-800">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-zinc-400"></div>
+                <span>Uploading and parsing file...</span>
+              </div>
+            )}
+            {attachedFile && (
+              <div className="flex items-center justify-between text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-3.5 w-3.5 text-lime-400" />
+                  <span>Attached: <strong>{attachedFile.name}</strong> (~{Math.round(attachedFile.content.length / 1024)} KB)</span>
                 </div>
-              );
-            }
-            return null;
-          })()}
+                <button
+                  type="button"
+                  onClick={() => setAttachedFile(null)}
+                  className="text-lime-500 hover:text-red-400 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            {(() => {
+              const promptText = attachedFile ? attachedFile.content + "\n" + input : input;
+              const estimation = estimateCost(promptText);
+              if (estimation) {
+                return (
+                  <div className="flex items-center gap-2 text-[11px] font-mono bg-lime-500/10 border border-lime-500/25 text-lime-400 px-3 py-2 rounded-xl animate-fade-in shadow-inner">
+                    <Sparkles className="h-3.5 w-3.5 animate-pulse text-lime-400" />
+                    <span>
+                      Detected complex query. Routing to <strong>{estimation.model}</strong>. Est. Input Cost: <strong>${estimation.cost.toFixed(6)}</strong>
+                    </span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
           <form onSubmit={handleSendMessage} className="relative flex items-center">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".pdf,.csv,.txt"
+              className="hidden"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={isGenerating || isUploading}
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute left-2 top-2 h-9 w-9 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl flex items-center justify-center transition-all"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={isGenerating ? "Streaming response..." : "Type your message here..."}
               disabled={isGenerating}
-              className="w-full bg-zinc-900 border-zinc-800 rounded-2xl py-6 pr-14 pl-4 text-sm focus-visible:ring-lime-500 text-zinc-100 placeholder-zinc-500 shadow-inner"
+              className="w-full bg-zinc-900 border-zinc-800 rounded-2xl py-6 pr-14 pl-12 text-sm focus-visible:ring-lime-500 text-zinc-100 placeholder-zinc-500 shadow-inner"
             />
             <Button
               type="submit"
