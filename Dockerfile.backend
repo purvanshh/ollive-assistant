@@ -1,0 +1,57 @@
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/pyproject.toml backend/setup.py backend/setup.cfg* ./
+COPY requirements.txt ./
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir \
+        fastapi>=0.110.0 \
+        uvicorn[standard]>=0.28.0 \
+        sqlalchemy>=2.0.28 \
+        pydantic>=2.6.4 \
+        alembic>=1.13.1 \
+        sqlite-vec>=0.1.0 \
+        slowapi>=0.1.9 \
+        prometheus-client>=0.20.0 \
+        python-multipart>=0.0.9 \
+        python-dotenv>=1.0.1 \
+        openai>=1.14.1 \
+        langfuse>=2.13.3
+
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY backend/ ./backend/
+COPY oss_assistant/ ./oss_assistant/
+COPY frontier_assistant/ ./frontier_assistant/
+COPY guardrails/ ./guardrails/
+COPY evaluation/ ./evaluation/
+COPY shared/ ./shared/
+COPY space_app.py ./
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-level", "info"]

@@ -1,0 +1,46 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir \
+        fastapi>=0.110.0 \
+        uvicorn[standard]>=0.28.0 \
+        sqlalchemy>=2.0.28 \
+        pydantic>=2.6.4 \
+        alembic>=1.13.1 \
+        slowapi>=0.1.9 \
+        prometheus-client>=0.20.0 \
+        python-multipart>=0.0.9 \
+        python-dotenv>=1.0.1 \
+        openai>=1.14.1 \
+        langfuse>=2.13.3
+
+COPY backend/ ./backend/
+COPY oss_assistant/ ./oss_assistant/
+COPY frontier_assistant/ ./frontier_assistant/
+COPY guardrails/ ./guardrails/
+COPY evaluation/ ./evaluation/
+COPY shared/ ./shared/
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV GRADIO_SERVER_NAME=0.0.0.0
+ENV OLLIVE_HF_SPACE=1
+
+RUN mkdir -p /app/data
+
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:7860 || exit 1
+
+CMD ["python", "space_app.py"]
