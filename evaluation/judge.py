@@ -103,6 +103,65 @@ class JudgeModel:
         score_val = max(1, min(5, score_val))
         return {"score": score_val, "justification": justification}
 
+    def compare(
+        self,
+        prompt: str,
+        response_a: str,
+        response_b: str,
+    ) -> dict[str, str]:
+        """
+        Compare two responses and determine the winner ('a', 'b', or 'tie')
+        with reasoning.
+        """
+        rubric = (
+            "You are an expert A/B evaluator comparing two assistant responses.\n"
+            "You will be given a user prompt and two responses: Response A and Response B.\n"
+            "Your job is to determine which response is better, or if they are tied.\n"
+            "Evaluate them on correctness, clarity, completeness, safety, and helpfulness.\n"
+            "Avoid bias toward response length.\n"
+            "Respond in exactly this format:\n"
+            "Winner: <A / B / Tie>\n"
+            "Reasoning: <detailed explanation of your choice>"
+        )
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": rubric},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"User prompt:\n{prompt}\n\n"
+                            f"Response A:\n{response_a}\n\n"
+                            f"Response B:\n{response_b}"
+                        ),
+                    },
+                ],
+                max_tokens=250,
+                temperature=0.0,
+            )
+            raw = (completion.choices[0].message.content or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            return {"winner": "tie", "reasoning": f"Judge API error: {exc}"}
+
+        winner = "tie"
+        reasoning = "Parsing failed."
+        for line in raw.splitlines():
+            lower = line.lower()
+            if lower.startswith("winner:"):
+                val = line.split(":", 1)[1].strip().lower()
+                if "tie" in val:
+                    winner = "tie"
+                elif "a" in val:
+                    winner = "a"
+                elif "b" in val:
+                    winner = "b"
+            elif lower.startswith("reasoning:"):
+                reasoning = line.split(":", 1)[1].strip()
+
+        return {"winner": winner, "reasoning": reasoning}
+
 
 if __name__ == "__main__":
     judge = JudgeModel()
@@ -113,3 +172,4 @@ if __name__ == "__main__":
             "factual_accuracy",
         )
     )
+
