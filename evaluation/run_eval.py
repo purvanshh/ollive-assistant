@@ -198,15 +198,18 @@ def run_evaluation() -> None:
     parser = argparse.ArgumentParser(description="Run Ollive Evaluation Suite.")
     parser.add_argument("--model-a", type=str, default="oss", help="Model A name/type ('oss' or identifier)")
     parser.add_argument("--model-b", type=str, default="frontier", help="Model B name/type ('frontier' or identifier)")
-    parser.add_argument("--judge", type=str, default="gpt-4.1-mini", help="Judge model name")
+    parser.add_argument("--judge", type=str, default="gpt-4.1", help="Judge model name")
     parser.add_argument("--run-type", type=str, default="full", choices=["full", "smoke"], help="Evaluation run type ('full' or 'smoke')")
+    parser.add_argument("--fast", action="store_true", help="Use gpt-4.1-mini instead of gpt-4.1 as the judge model")
     args = parser.parse_args()
 
-    print(f"Initializing models... Model A: {args.model_a}, Model B: {args.model_b}")
+    judge_model_name = "gpt-4.1-mini" if args.fast else args.judge
+
+    print(f"Initializing models... Model A: {args.model_a}, Model B: {args.model_b}, Judge: {judge_model_name}")
     run_id = run_evaluation_params(
         model_a_name=args.model_a,
         model_b_name=args.model_b,
-        judge_model_name=args.judge,
+        judge_model_name=judge_model_name,
         run_type=args.run_type,
     )
     print(f"Evaluation run completed. Run ID: {run_id}")

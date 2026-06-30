@@ -5,6 +5,8 @@ OpenAI-based LLM judge for evaluation scoring.
 from __future__ import annotations
 
 import os
+import json
+import hashlib
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -23,6 +25,10 @@ class JudgeModel:
     def __init__(self, model_name: str = "gpt-4.1-mini") -> None:
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model_name = model_name
+        self.cache_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "judge_cache.json"
+        )
+        self.cache = self._load_cache()
         self._rubrics = {
             "factual_accuracy": (
                 "You are an expert evaluator scoring factual accuracy.\n"
@@ -56,6 +62,22 @@ class JudgeModel:
             ),
         }
 
+    def _load_cache(self) -> dict:
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save_cache(self) -> None:
+        try:
+            with open(self.cache_path, "w", encoding="utf-8") as f:
+                json.dump(self.cache, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: Failed to save judge cache: {e}")
+
     def score(
         self,
         prompt: str,
@@ -67,6 +89,12 @@ class JudgeModel:
         """
         if dimension not in self._rubrics:
             raise ValueError(f"Unknown dimension: {dimension}")
+
+        # Caching logic
+        content_str = f"{prompt}|||{response}|||{dimension}"
+        cache_key = hashlib.md5(content_str.encode("utf-8")).hexdigest()
+        if cache_key in self.cache:
+            return self.cache[cache_key]
 
         try:
             completion = self.client.chat.completions.create(
@@ -101,7 +129,13 @@ class JudgeModel:
                 justification = line.split(":", 1)[1].strip()
 
         score_val = max(1, min(5, score_val))
-        return {"score": score_val, "justification": justification}
+        result = {"score": score_val, "justification": justification}
+
+        # Save to cache
+        self.cache[cache_key] = result
+        self._save_cache()
+
+        return result
 
     def compare(
         self,
@@ -113,6 +147,12 @@ class JudgeModel:
         Compare two responses and determine the winner ('a', 'b', or 'tie')
         with reasoning.
         """
+        # Caching logic
+        content_str = f"{prompt}|||{response_a}|||{response_b}"
+        cache_key = hashlib.md5(content_str.encode("utf-8")).hexdigest()
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
         rubric = (
             "You are an expert A/B evaluator comparing two assistant responses.\n"
             "You will be given a user prompt and two responses: Response A and Response B.\n"
@@ -160,7 +200,13 @@ class JudgeModel:
             elif lower.startswith("reasoning:"):
                 reasoning = line.split(":", 1)[1].strip()
 
-        return {"winner": winner, "reasoning": reasoning}
+        result = {"winner": winner, "reasoning": reasoning}
+
+        # Save to cache
+        self.cache[cache_key] = result
+        self._save_cache()
+
+        return result
 
 
 if __name__ == "__main__":
