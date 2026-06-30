@@ -205,6 +205,19 @@ export default function EvalPage() {
             <Play className="h-3.5 w-3.5" />
             {triggering ? "Running..." : "Run Eval"}
           </Button>
+          {selectedRunId && (
+            <Button
+              onClick={() => {
+                window.open(`${API_BASE_URL}/api/v1/evaluations/runs/${selectedRunId}/pdf?api_key=${apiKey}`, "_blank");
+              }}
+              size="sm"
+              variant="outline"
+              className="border-zinc-700 hover:bg-zinc-800 text-zinc-300 text-xs gap-1.5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download PDF
+            </Button>
+          )}
           <Button
             onClick={() => { fetchRuns(); fetchOverallStats(); if (selectedRunId) fetchRunStats(selectedRunId); }}
             size="sm" variant="ghost"

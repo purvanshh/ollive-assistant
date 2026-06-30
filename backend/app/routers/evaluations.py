@@ -283,3 +283,34 @@ def get_overall_stats(db: Session = Depends(get_db)):
         overall_tie_rate=tie_rate,
         recent_runs=recent,
     )
+
+
+@router.get("/runs/{run_id}/pdf")
+def get_eval_run_pdf(run_id: str, db: Session = Depends(get_db)):
+    """Generate and download a professional PDF report for a run."""
+    run = EvalRepository.get_run(db, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    
+    import os
+    import tempfile
+    from evaluation.generate_pdf import generate_pdf_report
+    from fastapi.responses import FileResponse
+
+    fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    try:
+        generate_pdf_report(run_id, db, pdf_path)
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"ollive_eval_report_{run_id}.pdf"
+        )
+    except Exception as e:
+        if os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {e}")
