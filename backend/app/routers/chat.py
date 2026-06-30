@@ -1,6 +1,7 @@
 import json
 import uuid
 import time
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from backend.app.repositories.audit import AuditLogRepository
 from backend.guardrails.llamaguard import LlamaGuard3
 from backend.oss_assistant.model import OSSAssistantModel
 from backend.frontier_assistant.model import FrontierModel
+
+logger = logging.getLogger("ollive")
 
 router = APIRouter(
     prefix="/chat",
@@ -233,6 +236,25 @@ def chat_completion(request: Request, payload: ChatRequest, db: Session = Depend
                 cost_usd=cost,
                 routing_reason=routing_reason
             )
+
+            # Check daily budget limit ($1.00 USD)
+            from sqlalchemy import func
+            from datetime import datetime
+            from backend.app.models import Message
+
+            today_start = datetime.utcnow().date()
+            today_start_dt = datetime(today_start.year, today_start.month, today_start.day)
+            daily_spend = db.query(
+                func.coalesce(func.sum(Message.cost_usd), 0.0)
+            ).filter(Message.created_at >= today_start_dt).scalar() or 0.0
+
+            if float(daily_spend) > 1.0:
+                logger.warning(json.dumps({
+                    "event": "budget_limit_exceeded",
+                    "daily_spend": round(float(daily_spend), 6),
+                    "budget_limit": 1.0,
+                    "warning": "Daily budget limit of $1.00 has been exceeded."
+                }))
 
             # Yield final metadata chunk with final cost
             final_chunk = {
